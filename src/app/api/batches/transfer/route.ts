@@ -1,0 +1,177 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+
+/**
+ * POST /api/batches/transfer
+ * Transfer stock from one warehouse to another.
+ * Creates new batch at destination (or adds to existing batch for same item),
+ * reduces source batch, and records the transaction.
+ *
+ * Body: {
+ *   batchId: string,
+ *   toWarehouseId: string,
+ *   quantity: number,
+ *   notes?: string
+ * }
+ */
+export async function POST(request: Request) {
+  try {
+    const user = await mutationGuard(request, { minRole: "WAREHOUSE_MANAGER" });
+    if (user instanceof NextResponse) return user;
+
+    const body = await request.json();
+    const { batchId, toWarehouseId, quantity, notes } = body;
+
+    if (!batchId || !toWarehouseId || !quantity || quantity <= 0) {
+      return NextResponse.json(
+        { error: "batchId, toWarehouseId, and positive quantity are required" },
+        { status: 400 }
+      );
+    }
+
+    const sourceBatch = await prisma.inventoryBatch.findUnique({
+      where: { id: batchId },
+      include: { item: true, warehouse: true },
+    });
+
+    if (!sourceBatch) {
+      return NextResponse.json({ error: "Source batch not found" }, { status: 404 });
+    }
+
+    if (sourceBatch.status !== "ACTIVE") {
+      return NextResponse.json(
+        { error: "Only ACTIVE batches can be transferred" },
+        { status: 400 }
+      );
+    }
+
+    if (quantity > sourceBatch.quantityRemaining) {
+      return NextResponse.json(
+        { error: `Insufficient stock. Available: ${sourceBatch.quantityRemaining}` },
+        { status: 400 }
+      );
+    }
+
+    if (sourceBatch.warehouseId === toWarehouseId) {
+      return NextResponse.json(
+        { error: "Source and destination warehouses must be different" },
+        { status: 400 }
+      );
+    }
+
+    const targetWarehouse = await prisma.warehouse.findUnique({
+      where: { id: toWarehouseId },
+    });
+    if (!targetWarehouse) {
+      return NextResponse.json({ error: "Destination warehouse not found" }, { status: 404 });
+    }
+
+    // Check if destination already has an active batch for the same item
+    const existingDestBatch = await prisma.inventoryBatch.findFirst({
+      where: {
+        itemId: sourceBatch.itemId,
+        warehouseId: toWarehouseId,
+        status: "ACTIVE",
+        expiryDate: sourceBatch.expiryDate,
+      },
+    });
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Reduce source batch
+      const newSourceQty = sourceBatch.quantityRemaining - quantity;
+      const updatedSource = await tx.inventoryBatch.update({
+        where: { id: batchId },
+        data: {
+          quantityRemaining: newSourceQty,
+          status: newSourceQty <= 0 ? "DEPLETED" : sourceBatch.status,
+        },
+      });
+
+      let destinationBatch;
+
+      if (existingDestBatch) {
+        // Add to existing batch at destination
+        destinationBatch = await tx.inventoryBatch.update({
+          where: { id: existingDestBatch.id },
+          data: {
+            quantity: existingDestBatch.quantity + quantity,
+            quantityRemaining: existingDestBatch.quantityRemaining + quantity,
+          },
+          include: { item: true, warehouse: true },
+        });
+      } else {
+        // Create new batch at destination
+        const transferBatchNum = `${sourceBatch.batchNumber}-T${Date.now().toString(36).toUpperCase()}`;
+        destinationBatch = await tx.inventoryBatch.create({
+          data: {
+            itemId: sourceBatch.itemId,
+            batchNumber: transferBatchNum,
+            supplierId: sourceBatch.supplierId,
+            purchasePrice: sourceBatch.purchasePrice,
+            currentUnitCost: sourceBatch.currentUnitCost || sourceBatch.purchasePrice,
+            quantity,
+            quantityRemaining: quantity,
+            unitCostAtEntry: sourceBatch.unitCostAtEntry || sourceBatch.purchasePrice,
+            warehouseId: toWarehouseId,
+            expiryDate: sourceBatch.expiryDate,
+            manufacturedDate: sourceBatch.manufacturedDate,
+            purchaseDate: sourceBatch.purchaseDate,
+            status: "ACTIVE",
+            notes: `Transferred from ${sourceBatch.warehouse.name} (batch ${sourceBatch.batchNumber})`,
+          },
+          include: { item: true, warehouse: true },
+        });
+      }
+
+      // 2. Record the transfer transaction
+      const unitCost = Number(sourceBatch.currentUnitCost || sourceBatch.purchasePrice);
+      await tx.stockTransaction.create({
+        data: {
+          type: "TRANSFERRED",
+          batchId: batchId,
+          fromWarehouseId: sourceBatch.warehouseId,
+          toWarehouseId,
+          quantity,
+          unitCost,
+          totalValue: unitCost * quantity,
+          reason: notes || `Transfer ${quantity} ${sourceBatch.item.unitOfMeasure} from ${sourceBatch.warehouse.name} to ${targetWarehouse.name}`,
+          performedById: user.id,
+        },
+      });
+
+      return { updatedSource, destinationBatch };
+    });
+
+    // Audit log
+    await writeAuditLog({
+      userId: user.id,
+      action: "STOCK_TRANSFER",
+      entity: "InventoryBatch",
+      entityId: batchId,
+      oldValues: { quantityRemaining: Number(sourceBatch.quantityRemaining) },
+      newValues: {
+        transferred: quantity,
+        fromWarehouse: sourceBatch.warehouse.name,
+        toWarehouse: targetWarehouse.name,
+        sourceRemaining: Number(result.updatedSource.quantityRemaining),
+      },
+      ipAddress: getClientIp(request),
+    });
+
+    return NextResponse.json(
+      {
+        message: "Transfer completed successfully",
+        sourceBatch: result.updatedSource,
+        destinationBatch: result.destinationBatch,
+      },
+      { status: 201 }
+    );
+  } catch (error) {
+    console.error("Error transferring stock:", error);
+    return NextResponse.json(
+      { error: "Failed to transfer stock" },
+      { status: 500 }
+    );
+  }
+}

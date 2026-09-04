@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  # ─── PostgreSQL Database ─────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: farmops_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: farmops
+      POSTGRES_USER: farmops
+      POSTGRES_PASSWORD: farmops123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U farmops -d farmops"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── Next.js Application ────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: farmops_app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "postgresql://farmops:farmops123@postgres:5432/farmops"
+      NEXTAUTH_SECRET: "farmops-dev-secret-key-change-in-production"
+      NEXTAUTH_URL: "http://localhost:3000"
+      NEXT_PUBLIC_APP_URL: "http://localhost:3000"
+      SMTP_HOST: "mailhog"
+      SMTP_PORT: "1025"
+      SMTP_SECURE: "false"
+      SMTP_FROM: "FarmOps <noreply@farmops.com>"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ─── MailHog (Email Testing) ────────────────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: farmops_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+
+volumes:
+  postgres_data:

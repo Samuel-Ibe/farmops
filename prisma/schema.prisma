@@ -1,0 +1,498 @@
+// FarmOps — Farm Inventory & Resource Intelligence Platform
+// Prisma Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  FARM_MANAGER
+  WAREHOUSE_MANAGER
+  FIELD_WORKER
+  ACCOUNTANT
+}
+
+enum TransactionType {
+  RECEIVED
+  ISSUED
+  TRANSFERRED
+  ADJUSTED
+  WASTED
+  EXPIRED
+  RETURNED
+}
+
+enum BatchStatus {
+  ACTIVE
+  EXPIRED
+  DEPLETED
+  RECALLED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FULFILLED
+  CANCELLED
+}
+
+enum RequestPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum WarehouseType {
+  PHYSICAL
+  COLD_STORAGE
+  VIRTUAL
+}
+
+enum WasteType {
+  EXPIRED
+  DAMAGED
+  SPOILED
+  LOST
+  STOLEN
+}
+
+enum AdjustmentType {
+  PHYSICAL_COUNT
+  SYSTEM_CORRECTION
+  DAMAGE
+  THEFT
+}
+
+enum POStatus {
+  DRAFT
+  SUBMITTED
+  CONFIRMED
+  SHIPPED
+  RECEIVED
+  CANCELLED
+}
+
+enum SeasonStatus {
+  PLANNING
+  ACTIVE
+  COMPLETED
+}
+
+enum NotificationType {
+  LOW_STOCK
+  EXPIRING
+  REQUEST_PENDING
+  REQUEST_APPROVED
+  REQUEST_REJECTED
+  STOCK_ADJUSTED
+  PO_RECEIVED
+}
+
+// ─── Users & Auth ────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  password      String
+  role          UserRole  @default(FIELD_WORKER)
+  avatar        String?
+  isActive      Boolean   @default(true)
+
+  performedTransactions   StockTransaction[]  @relation("TransactionPerformer")
+  adjustedStock           StockAdjustment[]    @relation("StockAdjuster")
+  requestedResources      ResourceRequest[]    @relation("RequestRequester")
+  reviewedResources       ResourceRequest[]    @relation("RequestReviewer")
+  auditLogs               AuditLog[]
+  notifications           Notification[]
+  createdPurchaseOrders   PurchaseOrder[]      @relation("POCreator")
+  reportedWaste           WasteRecord[]        @relation("WasteReporter")
+  countedStock            StockCount[]         @relation("StockCounter")
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// ─── Farms & Locations ───────────────────────────────────
+
+model Farm {
+  id          String      @id @default(cuid())
+  name        String
+  location    String
+  description String?
+  acreage     Float?
+  isActive    Boolean     @default(true)
+
+  warehouses     Warehouse[]
+  transactions   StockTransaction[]
+  resourceRequests ResourceRequest[]
+  purchaseOrders PurchaseOrder[]
+  wasteRecords   WasteRecord[]
+  seasons        Season[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Warehouse {
+  id          String        @id @default(cuid())
+  name        String
+  farmId      String
+  location    String?
+  type        WarehouseType @default(PHYSICAL)
+  capacity    Int?
+  isActive    Boolean       @default(true)
+
+  farm              Farm               @relation(fields: [farmId], references: [id])
+  batches           InventoryBatch[]
+  fromTransfers     StockTransaction[] @relation("TransferFrom")
+  toTransfers       StockTransaction[] @relation("TransferTo")
+  resourceRequests  ResourceRequest[]
+  stockCounts       StockCount[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ─── Inventory ───────────────────────────────────────────
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  icon        String?
+  color       String?
+
+  items       InventoryItem[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Supplier {
+  id              String   @id @default(cuid())
+  name            String
+  contactPerson   String?
+  phone           String?
+  email           String?
+  address         String?
+  rating          Int?     // 1-5
+  isActive        Boolean  @default(true)
+
+  batches         InventoryBatch[]
+  defaultItems    InventoryItem[]
+  purchaseOrders  PurchaseOrder[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model InventoryItem {
+  id                        String   @id @default(cuid())
+  name                      String
+  categoryId                String
+  unitOfMeasure             String   // e.g., "kg", "bags", "liters", "units"
+  description               String?
+  minimumStockLevel         Float    @default(0)
+  maximumStockLevel         Float?
+  reorderPoint              Float?
+  reorderQuantity           Float?
+  defaultSupplierId         String?
+  shelfLifeDays             Int?     // null = no expiry
+  requiresExpiryTracking    Boolean  @default(false)
+  isActive                  Boolean  @default(true)
+
+  category                  Category       @relation(fields: [categoryId], references: [id])
+  defaultSupplier           Supplier?      @relation(fields: [defaultSupplierId], references: [id])
+  batches                   InventoryBatch[]
+  resourceRequests          ResourceRequest[]
+  purchaseOrderItems        PurchaseOrderItem[]
+  seasonPlans               SeasonInventoryPlan[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model InventoryBatch {
+  id                  String      @id @default(cuid())
+  itemId              String
+  batchNumber         String
+  supplierId          String?
+  purchasePrice       Decimal     @db.Decimal(12, 2)
+  currentUnitCost     Decimal?    @db.Decimal(12, 2)
+  quantity            Float
+  quantityRemaining   Float
+  unitCostAtEntry     Decimal?    @db.Decimal(12, 2)
+  warehouseId         String
+  expiryDate          DateTime?
+  manufacturedDate    DateTime?
+  barcode             String?
+  qrCodeData          String?
+  purchaseDate        DateTime?
+  status              BatchStatus @default(ACTIVE)
+  notes               String?
+
+  item                InventoryItem      @relation(fields: [itemId], references: [id])
+  supplier            Supplier?          @relation(fields: [supplierId], references: [id])
+  warehouse           Warehouse          @relation(fields: [warehouseId], references: [id])
+  transactions        StockTransaction[]
+  adjustments         StockAdjustment[]
+  wasteRecords        WasteRecord[]
+  purchaseOrderItems  PurchaseOrderItem[]
+  stockCountItems     StockCountItem[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([batchNumber])
+  @@index([itemId])
+  @@index([warehouseId])
+  @@index([status])
+  @@index([expiryDate])
+}
+
+// ─── Stock Movements ─────────────────────────────────────
+
+model StockTransaction {
+  id                String          @id @default(cuid())
+  type              TransactionType
+  batchId           String
+  fromWarehouseId   String?
+  toWarehouseId     String?
+  quantity          Float
+  unitCost          Decimal?        @db.Decimal(12, 2)
+  totalValue        Decimal?        @db.Decimal(12, 2)
+  reason            String?
+  referenceNumber   String?
+  performedById     String
+  farmId            String?
+
+  batch             InventoryBatch  @relation(fields: [batchId], references: [id])
+  fromWarehouse     Warehouse?      @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
+  toWarehouse       Warehouse?      @relation("TransferTo", fields: [toWarehouseId], references: [id])
+  performedBy       User            @relation("TransactionPerformer", fields: [performedById], references: [id])
+  farm              Farm?           @relation(fields: [farmId], references: [id])
+
+  createdAt   DateTime  @default(now())
+
+  @@index([batchId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model StockAdjustment {
+  id                String          @id @default(cuid())
+  batchId           String
+  expectedQuantity  Float
+  actualQuantity    Float
+  variance          Float
+  varianceReason    String?
+  adjustedById      String
+  adjustmentType    AdjustmentType  @default(PHYSICAL_COUNT)
+
+  batch             InventoryBatch  @relation(fields: [batchId], references: [id])
+  adjustedBy        User            @relation("StockAdjuster", fields: [adjustedById], references: [id])
+
+  createdAt   DateTime  @default(now())
+}
+
+// ─── Requests & Approvals ────────────────────────────────
+
+model ResourceRequest {
+  id                String          @id @default(cuid())
+  requestNumber     String          @unique
+  requestedById     String
+  farmId            String
+  warehouseId       String?
+  itemId            String
+  quantity          Float
+  unitOfMeasure     String
+  purpose           String?
+  priority          RequestPriority @default(MEDIUM)
+  status            RequestStatus   @default(PENDING)
+  reviewedById      String?
+  reviewNote        String?
+  approvedQuantity  Float?
+  fulfilledAt       DateTime?
+  createdAt         DateTime        @default(now())
+  reviewedAt        DateTime?
+
+  requestedBy   User      @relation("RequestRequester", fields: [requestedById], references: [id])
+  farm          Farm      @relation(fields: [farmId], references: [id])
+  warehouse     Warehouse? @relation(fields: [warehouseId], references: [id])
+  item          InventoryItem @relation(fields: [itemId], references: [id])
+  reviewedBy    User?     @relation("RequestReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status])
+  @@index([requestedById])
+}
+
+// ─── Purchase Orders ─────────────────────────────────────
+
+model PurchaseOrder {
+  id                    String      @id @default(cuid())
+  orderNumber           String      @unique
+  supplierId            String
+  farmId                String
+  status                POStatus    @default(DRAFT)
+  totalAmount           Decimal     @db.Decimal(12, 2) @default(0)
+  expectedDeliveryDate  DateTime?
+  actualDeliveryDate    DateTime?
+  notes                 String?
+  createdById           String
+
+  supplier        Supplier            @relation(fields: [supplierId], references: [id])
+  farm            Farm                @relation(fields: [farmId], references: [id])
+  createdBy       User                @relation("POCreator", fields: [createdById], references: [id])
+  items           PurchaseOrderItem[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model PurchaseOrderItem {
+  id                String      @id @default(cuid())
+  purchaseOrderId   String
+  itemId            String
+  quantity          Float
+  unitPrice         Decimal     @db.Decimal(12, 2)
+  totalPrice        Decimal     @db.Decimal(12, 2)
+  quantityReceived  Float       @default(0)
+
+  purchaseOrder     PurchaseOrder    @relation(fields: [purchaseOrderId], references: [id])
+  item              InventoryItem    @relation(fields: [itemId], references: [id])
+  batches           InventoryBatch[]
+}
+
+// ─── Waste & Loss ────────────────────────────────────────
+
+model WasteRecord {
+  id              String      @id @default(cuid())
+  batchId         String
+  quantity        Float
+  wasteType       WasteType
+  reason          String?
+  reportedById    String
+  farmId          String
+  estimatedValue  Decimal?    @db.Decimal(12, 2)
+  reportedAt      DateTime    @default(now())
+
+  batch           InventoryBatch  @relation(fields: [batchId], references: [id])
+  reportedBy      User            @relation("WasteReporter", fields: [reportedById], references: [id])
+  farm            Farm            @relation(fields: [farmId], references: [id])
+
+  @@index([wasteType])
+  @@index([farmId])
+}
+
+// ─── Seasonal Planning ───────────────────────────────────
+
+model Season {
+  id          String        @id @default(cuid())
+  name        String
+  farmId      String
+  startDate   DateTime
+  endDate     DateTime
+  cropType    String?
+  status      SeasonStatus  @default(PLANNING)
+
+  farm        Farm                   @relation(fields: [farmId], references: [id])
+  plans       SeasonInventoryPlan[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model SeasonInventoryPlan {
+  id                      String   @id @default(cuid())
+  seasonId                String
+  itemId                  String
+  estimatedQuantityNeeded Float
+  budget                  Decimal? @db.Decimal(12, 2)
+  actualQuantityUsed      Float?
+  notes                   String?
+
+  season      Season          @relation(fields: [seasonId], references: [id])
+  item        InventoryItem   @relation(fields: [itemId], references: [id])
+}
+
+// ─── Physical Stock Count ────────────────────────────────
+
+model StockCount {
+  id              String  @id @default(cuid())
+  warehouseId     String
+  countDate       DateTime @default(now())
+  status          String  @default("IN_PROGRESS") // IN_PROGRESS, COMPLETED, RECONCILED
+  countedById     String
+  notes           String?
+
+  warehouse       Warehouse       @relation(fields: [warehouseId], references: [id])
+  countedBy       User            @relation("StockCounter", fields: [countedById], references: [id])
+  items           StockCountItem[]
+
+  createdAt   DateTime  @default(now())
+}
+
+model StockCountItem {
+  id              String  @id @default(cuid())
+  stockCountId    String
+  batchId         String
+  systemQuantity  Float
+  countedQuantity Float?
+  variance        Float?
+  notes           String?
+
+  stockCount      StockCount      @relation(fields: [stockCountId], references: [id])
+  batch           InventoryBatch  @relation(fields: [batchId], references: [id])
+}
+
+// ─── Notifications ───────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  entity    String?
+  entityId  String?
+  isRead    Boolean          @default(false)
+
+  user      User @relation(fields: [userId], references: [id])
+
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, isRead])
+}
+
+// ─── Audit Log ───────────────────────────────────────────
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  action      String
+  entity      String
+  entityId    String?
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent   String?
+
+  user        User? @relation(fields: [userId], references: [id])
+
+  createdAt   DateTime  @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}

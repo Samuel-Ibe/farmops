@@ -1,0 +1,9 @@
+⨯ Another next dev server is already running.
+
+- Local:        http://localhost:64134
+- PID:          9312
+- Dir:          C:\Users\Samuel Ibe\Downloads\Farm Ops
+- Log:          .next\dev\logs\next-development.log
+
+You can access the existing server at http://localhost:64134,
+or run taskkill /PID 9312 /F to stop it and start a new one.

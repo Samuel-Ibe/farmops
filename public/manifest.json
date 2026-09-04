@@ -1,0 +1,47 @@
+{
+  "name": "FarmOps — Farm Inventory & Resource Intelligence",
+  "short_name": "FarmOps",
+  "description": "Digital farm inventory and resource management platform for tracking, managing, and optimizing agricultural inputs and operations.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#16a34a",
+  "orientation": "any",
+  "scope": "/",
+  "lang": "en",
+  "categories": ["business", "productivity", "agriculture"],
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Inventory",
+      "short_name": "Inventory",
+      "url": "/inventory",
+      "description": "View and manage inventory items"
+    },
+    {
+      "name": "QR Scanner",
+      "short_name": "Scanner",
+      "url": "/qr",
+      "description": "Scan QR codes and barcodes"
+    },
+    {
+      "name": "Transactions",
+      "short_name": "Transactions",
+      "url": "/transactions",
+      "description": "View stock movements"
+    },
+    {
+      "name": "Intelligence",
+      "short_name": "AI Insights",
+      "url": "/intelligence",
+      "description": "View forecasting and recommendations"
+    }
+  ]
+}
