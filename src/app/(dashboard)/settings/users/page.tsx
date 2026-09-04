@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +20,7 @@ import {
   UserX,
   Mail,
   Calendar,
+  Lock,
 } from "lucide-react";
 
 const ROLE_CONFIG: Record<string, { label: string; color: string; description: string }> = {
@@ -29,6 +32,13 @@ const ROLE_CONFIG: Record<string, { label: string; color: string; description: s
 };
 
 export default function UsersPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+  const userRole = (session?.user as any)?.role || "FIELD_WORKER";
+  const isAdmin = hydrated && userRole === "ADMIN";
+
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -142,6 +152,31 @@ export default function UsersPage() {
       toast("Failed to update user", "error");
     }
   };
+
+  // Non-admin access denied (only render after hydration to avoid mismatch)
+  if (hydrated && status === "authenticated" && !isAdmin) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="User Management"
+          description="Manage user accounts and role assignments"
+        />
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Lock className="h-12 w-12 text-muted-foreground mb-4" />
+            <h2 className="text-lg font-semibold mb-2">Access Restricted</h2>
+            <p className="text-sm text-muted-foreground text-center max-w-md">
+              Only administrators can manage user accounts and roles.
+              Contact your admin if you need access.
+            </p>
+            <Button variant="outline" className="mt-4" onClick={() => router.push("/settings")}>
+              Back to Settings
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -276,14 +311,22 @@ export default function UsersPage() {
 
               <div className="space-y-2">
                 <Label>Role *</Label>
-                <FormSelect
-                  value={formRole}
-                  onChange={(e) => setFormRole(e.target.value)}
-                  options={Object.entries(ROLE_CONFIG).map(([value, config]) => ({
-                    value,
-                    label: `${config.label} — ${config.description}`,
-                  }))}
-                />
+                {isAdmin ? (
+                  <FormSelect
+                    value={formRole}
+                    onChange={(e) => setFormRole(e.target.value)}
+                    options={Object.entries(ROLE_CONFIG).map(([value, config]) => ({
+                      value,
+                      label: `${config.label} — ${config.description}`,
+                    }))}
+                  />
+                ) : (
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted">
+                    <Shield className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm">{ROLE_CONFIG[formRole]?.label || formRole}</span>
+                    <span className="text-xs text-muted-foreground ml-auto">(admin only)</span>
+                  </div>
+                )}
               </div>
 
               {!editingUser && (

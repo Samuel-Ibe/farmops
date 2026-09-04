@@ -7,10 +7,16 @@ import { parsePaginationParams, cachedJsonResponse } from "@/lib/pagination";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const farmId = searchParams.get("farmId");
     const pagination = parsePaginationParams(searchParams, { limit: 20 });
+
+    const where = {
+      ...(farmId && { farmId }),
+    };
 
     const [orders, total] = await Promise.all([
       prisma.purchaseOrder.findMany({
+        where,
         include: {
           supplier: true, farm: true,
           items: { include: { item: true } },
@@ -20,7 +26,7 @@ export async function GET(request: Request) {
         skip: pagination.offset,
         take: pagination.limit,
       }),
-      prisma.purchaseOrder.count(),
+      prisma.purchaseOrder.count({ where }),
     ]);
 
     return cachedJsonResponse(orders, 30);

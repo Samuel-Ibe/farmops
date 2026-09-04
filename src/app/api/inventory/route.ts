@@ -9,10 +9,13 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search") || "";
     const categoryId = searchParams.get("categoryId");
+    const farmId = searchParams.get("farmId");
     const pagination = parsePaginationParams(searchParams, { limit: 50 });
 
     // If searching, don't paginate (return all matches for search dropdown)
     if (search || categoryId) {
+      const batchFilter: any = { status: "ACTIVE" };
+      if (farmId) batchFilter.warehouse = { farmId };
       const items = await prisma.inventoryItem.findMany({
         where: {
           isActive: true,
@@ -22,7 +25,7 @@ export async function GET(request: Request) {
         include: {
           category: true,
           batches: {
-            where: { status: "ACTIVE" },
+            where: batchFilter,
             include: { warehouse: { include: { farm: true } } },
           },
           _count: { select: { batches: true } },
@@ -43,13 +46,15 @@ export async function GET(request: Request) {
     }
 
     // Paginated list
+    const batchFilter: any = { status: "ACTIVE" };
+    if (farmId) batchFilter.warehouse = { farmId };
     const [items, total] = await Promise.all([
       prisma.inventoryItem.findMany({
         where: { isActive: true },
         include: {
           category: true,
           batches: {
-            where: { status: "ACTIVE" },
+            where: batchFilter,
             include: { warehouse: { include: { farm: true } } },
           },
           _count: { select: { batches: true } },

@@ -7,10 +7,16 @@ import { parsePaginationParams, cachedJsonResponse } from "@/lib/pagination";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const farmId = searchParams.get("farmId");
     const pagination = parsePaginationParams(searchParams, { limit: 20 });
+
+    const where = {
+      ...(farmId && { farmId }),
+    };
 
     const [records, total] = await Promise.all([
       prisma.wasteRecord.findMany({
+        where,
         include: {
           batch: { include: { item: true, warehouse: true } },
           reportedBy: { select: { name: true, role: true } },
@@ -20,7 +26,7 @@ export async function GET(request: Request) {
         skip: pagination.offset,
         take: pagination.limit,
       }),
-      prisma.wasteRecord.count(),
+      prisma.wasteRecord.count({ where }),
     ]);
 
     return cachedJsonResponse(records, 30);

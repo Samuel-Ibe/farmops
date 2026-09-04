@@ -108,6 +108,8 @@ model User {
   role          UserRole  @default(FIELD_WORKER)
   avatar        String?
   isActive      Boolean   @default(true)
+  farmId        String?
+  farm          Farm?     @relation(fields: [farmId], references: [id])
 
   performedTransactions   StockTransaction[]  @relation("TransactionPerformer")
   adjustedStock           StockAdjustment[]    @relation("StockAdjuster")
@@ -133,12 +135,13 @@ model Farm {
   acreage     Float?
   isActive    Boolean     @default(true)
 
-  warehouses     Warehouse[]
-  transactions   StockTransaction[]
-  resourceRequests ResourceRequest[]
-  purchaseOrders PurchaseOrder[]
-  wasteRecords   WasteRecord[]
-  seasons        Season[]
+  users              User[]
+  warehouses         Warehouse[]
+  transactions       StockTransaction[]
+  resourceRequests   ResourceRequest[]
+  purchaseOrders     PurchaseOrder[]
+  wasteRecords       WasteRecord[]
+  seasons            Season[]
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

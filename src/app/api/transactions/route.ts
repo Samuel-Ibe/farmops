@@ -9,11 +9,13 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type");
     const batchId = searchParams.get("batchId");
+    const farmId = searchParams.get("farmId");
     const pagination = parsePaginationParams(searchParams, { limit: 20 });
 
     const where = {
       ...(type && { type: type as any }),
       ...(batchId && { batchId }),
+      ...(farmId && { farmId }),
     };
 
     const [transactions, total] = await Promise.all([

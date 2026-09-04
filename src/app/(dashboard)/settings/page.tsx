@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/shared/page-header";
 import { FormField } from "@/components/ui/form-field";
-import { FormSelect } from "@/components/ui/form-select";
 import { useToast } from "@/components/ui/toast";
 import {
   Settings,
@@ -20,11 +21,24 @@ import {
   Webhook,
 } from "lucide-react";
 
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: "Administrator",
+  FARM_MANAGER: "Farm Manager",
+  WAREHOUSE_MANAGER: "Warehouse Manager",
+  FIELD_WORKER: "Field Worker",
+  ACCOUNTANT: "Accountant",
+};
+
 export default function SettingsPage() {
+  const { data: session } = useSession();
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+  const userRole = (session?.user as any)?.role || "FIELD_WORKER";
+  const isAdmin = hydrated && userRole === "ADMIN";
+
   const [profile, setProfile] = useState({
-    name: "Admin User",
-    email: "admin@farmops.com",
-    role: "ADMIN",
+    name: session?.user?.name || "",
+    email: session?.user?.email || "",
   });
   const [notifications, setNotifications] = useState({
     lowStock: true,
@@ -47,6 +61,7 @@ export default function SettingsPage() {
       title: "User Management",
       description: "Manage user accounts, roles, and permissions",
       color: "bg-blue-50 text-blue-600",
+      adminOnly: true,
     },
     {
       href: "/settings/categories",
@@ -54,6 +69,7 @@ export default function SettingsPage() {
       title: "Categories",
       description: "Manage inventory item categories and labels",
       color: "bg-purple-50 text-purple-600",
+      adminOnly: false,
     },
     {
       href: "/settings/integrations",
@@ -61,6 +77,7 @@ export default function SettingsPage() {
       title: "Integrations",
       description: "Webhooks, API keys, email, and data exports",
       color: "bg-green-50 text-green-600",
+      adminOnly: false,
     },
   ];
 
@@ -74,24 +91,26 @@ export default function SettingsPage() {
       {/* Quick Management Links */}
       <div className="grid gap-4 sm:grid-cols-2">
         {managementLinks.map((link) => (
-          <Link key={link.href} href={link.href}>
-            <Card className="hover:shadow-md transition-shadow cursor-pointer">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`rounded-lg p-2 ${link.color}`}>
-                      <link.icon className="h-5 w-5" />
+          <div key={link.href} hidden={!isAdmin && link.adminOnly}>
+            <Link href={link.href}>
+              <Card className="hover:shadow-md transition-shadow cursor-pointer">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`rounded-lg p-2 ${link.color}`}>
+                        <link.icon className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="font-medium">{link.title}</p>
+                        <p className="text-xs text-muted-foreground">{link.description}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium">{link.title}</p>
-                      <p className="text-xs text-muted-foreground">{link.description}</p>
-                    </div>
+                    <ArrowRight className="h-5 w-5 text-muted-foreground" />
                   </div>
-                  <ArrowRight className="h-5 w-5 text-muted-foreground" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
+                </CardContent>
+              </Card>
+            </Link>
+          </div>
         ))}
       </div>
 
@@ -117,21 +136,16 @@ export default function SettingsPage() {
               label="Email"
               type="email"
               value={profile.email}
-              onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+              disabled
             />
           </div>
-          <FormSelect
-            label="Role"
-            value={profile.role}
-            onChange={(e) => setProfile({ ...profile, role: e.target.value })}
-            options={[
-              { value: "ADMIN", label: "Administrator" },
-              { value: "FARM_MANAGER", label: "Farm Manager" },
-              { value: "WAREHOUSE_MANAGER", label: "Warehouse Manager" },
-              { value: "FIELD_WORKER", label: "Field Worker" },
-              { value: "ACCOUNTANT", label: "Accountant" },
-            ]}
-          />
+          <div className="flex items-center gap-2" hidden={!isAdmin}>
+            <span className="text-sm font-medium text-muted-foreground">Role:</span>
+            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+              <Shield className="h-3 w-3 mr-1" />
+              {ROLE_LABELS[userRole] || userRole}
+            </Badge>
+          </div>
           <Button onClick={handleSave}>
             <Save className="h-4 w-4 mr-2" />
             {saved ? "✓ Saved!" : "Save Changes"}
@@ -191,8 +205,8 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Security */}
-      <Card>
+      {/* Security - Admin only */}
+      <Card hidden={!isAdmin}>
         <CardHeader>
           <div className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-muted-foreground" />

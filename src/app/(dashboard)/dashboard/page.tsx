@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/shared/page-header";
@@ -60,21 +61,28 @@ interface DashboardData {
 }
 
 export default function DashboardPage() {
+  const { data: session } = useSession();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const userRole = (session?.user as any)?.role;
+  const userFarmId = (session?.user as any)?.farmId;
+  const isAdmin = userRole === "ADMIN";
+  // Admin sees all data; non-admin users only see their farm's data
+  const farmFilter = isAdmin || !userFarmId ? "" : `&farmId=${userFarmId}`;
 
   const fetchDashboard = async () => {
     setLoading(true);
     try {
-      // Fetch all data in parallel
+      // Fetch all data in parallel, scoped by user's farm
       const [itemsRes, requestsRes, txnsRes, farmsRes, warehousesRes, poRes, wasteRes] = await Promise.all([
-        fetch("/api/inventory").then((r) => r.json()).catch(() => []),
-        fetch("/api/requests").then((r) => r.json()).catch(() => []),
-        fetch("/api/transactions?limit=100").then((r) => r.json()).catch(() => []),
-        fetch("/api/farms").then((r) => r.json()).catch(() => []),
-        fetch("/api/warehouses").then((r) => r.json()).catch(() => []),
-        fetch("/api/purchase-orders").then((r) => r.json()).catch(() => []),
-        fetch("/api/waste").then((r) => r.json()).catch(() => []),
+        fetch(`/api/inventory?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
+        fetch(`/api/requests?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
+        fetch(`/api/transactions?limit=100${farmFilter}`).then((r) => r.json()).catch(() => []),
+        fetch(`/api/farms?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
+        fetch(`/api/warehouses?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
+        fetch(`/api/purchase-orders?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
+        fetch(`/api/waste?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
       ]);
 
       const extract = (res: any) => Array.isArray(res) ? res : (res?.data || []);

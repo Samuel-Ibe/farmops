@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireRole } from "@/lib/api-auth";
 
 export async function GET() {
   try {
+    // Only admins can list users
+    const user = await requireRole(["ADMIN"]);
+    if (user instanceof NextResponse) return user;
+
     const users = await prisma.user.findMany({
       select: {
         id: true,
