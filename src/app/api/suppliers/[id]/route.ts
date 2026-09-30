@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { mutationGuard } from "@/lib/api-auth";
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const guard = await mutationGuard(request, { minRole: "FARM_MANAGER" });
+    if (guard instanceof NextResponse) return guard;
     const { id } = await params;
     const body = await request.json();
     const { name, contactPerson, email, phone, address, rating } = body;
@@ -37,6 +40,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const guard = await mutationGuard(request, { minRole: "ADMIN" });
+    if (guard instanceof NextResponse) return guard;
     const { id } = await params;
 
     const supplier = await prisma.supplier.findUnique({

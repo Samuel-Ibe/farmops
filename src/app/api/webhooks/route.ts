@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { registerWebhook, listWebhooks, WEBHOOK_EVENTS } from "@/lib/webhooks";
-import { mutationGuard } from "@/lib/api-auth";
+import { mutationGuard, requireAuth } from "@/lib/api-auth";
 
 /**
  * GET /api/webhooks
@@ -8,6 +8,8 @@ import { mutationGuard } from "@/lib/api-auth";
  */
 export async function GET() {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const webhooks = listWebhooks();
     const events = Object.values(WEBHOOK_EVENTS);
     return NextResponse.json({ webhooks, availableEvents: events });
@@ -36,11 +38,33 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate URL
+    // Validate URL + block SSRF targets (private/loopback/link-local hosts)
+    let parsed: URL;
     try {
-      new URL(url);
+      parsed = new URL(url);
     } catch {
       return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return NextResponse.json({ error: "Only http(s) URLs are allowed" }, { status: 400 });
+    }
+    const host = parsed.hostname.toLowerCase();
+    const isPrivate =
+      host === "localhost" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host.endsWith(".local") ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      /^169\.254\./.test(host) ||
+      /^fc|^fd|^fe80/i.test(host);
+    if (isPrivate) {
+      return NextResponse.json(
+        { error: "Webhook URLs may not target private or internal hosts" },
+        { status: 400 }
+      );
     }
 
     const webhook = registerWebhook(url, events);

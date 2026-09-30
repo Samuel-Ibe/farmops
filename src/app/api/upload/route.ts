@@ -5,6 +5,13 @@ import { join } from "path";
 import crypto from "crypto";
 
 const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
+const EXT_BY_TYPE: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 const UPLOAD_DIR = join(process.cwd(), "public", "uploads");
 
@@ -39,9 +46,12 @@ export async function POST(request: Request) {
     // Ensure upload directory exists
     await mkdir(UPLOAD_DIR, { recursive: true });
 
-    // Generate unique filename
-    const ext = file.name.split(".").pop() || "jpg";
-    const filename = `${entityType || "misc"}-${entityId || "general"}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+    // Extension is derived from the validated MIME type — never from the
+    // client-supplied filename (which could contain path separators).
+    const ext = EXT_BY_TYPE[file.type] || "bin";
+    const safeEntity = (entityType || "misc").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
+    const safeEntityId = (entityId || "general").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
+    const filename = `${safeEntity}-${safeEntityId}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
     const filepath = join(UPLOAD_DIR, filename);
 
     // Convert file to buffer and write

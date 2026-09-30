@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope } from "@/lib/api-auth";
 import { validate, createTransactionSchema } from "@/lib/api-validations";
 import { parsePaginationParams, paginatedResponse, cachedJsonResponse } from "@/lib/pagination";
 
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type");
     const batchId = searchParams.get("batchId");
-    const farmId = searchParams.get("farmId");
+    const farmId = resolveFarmScope(user, searchParams.get("farmId"));
     const pagination = parsePaginationParams(searchParams, { limit: 20 });
 
     const where = {
@@ -55,8 +57,13 @@ export async function POST(request: Request) {
 
     const { type, batchId, fromWarehouseId, toWarehouseId, quantity, reason, referenceNumber, farmId } = validation.data;
 
-    const batch = await prisma.inventoryBatch.findUnique({ where: { id: batchId } });
+    const batch = await prisma.inventoryBatch.findUnique({ where: { id: batchId }, include: { warehouse: true } });
     if (!batch) return NextResponse.json({ error: "Batch not found" }, { status: 404 });
+
+    // Ownership: non-admins may only transact against batches in their own farm
+    if (user.role !== "ADMIN" && batch.warehouse?.farmId !== user.farmId) {
+      return NextResponse.json({ error: "Batch belongs to another farm" }, { status: 403 });
+    }
 
     if (type !== "RECEIVED" && type !== "RETURNED" && quantity > batch.quantityRemaining) {
       return NextResponse.json({ error: "Insufficient stock" }, { status: 400 });
@@ -74,7 +81,7 @@ export async function POST(request: Request) {
         reason: reason || undefined,
         referenceNumber: referenceNumber || undefined,
         performedById: user.id,
-        farmId: farmId || undefined,
+        farmId: user.role === "ADMIN" ? farmId || undefined : user.farmId || undefined,
       },
       include: {
         batch: { include: { item: true } },

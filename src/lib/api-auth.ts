@@ -6,6 +6,7 @@ export interface AuthUser {
   name: string;
   email: string;
   role: string;
+  farmId?: string | null;
 }
 
 // ─── Session Extraction ─────────────────────────────────────
@@ -19,6 +20,7 @@ export async function getAuthUser(): Promise<AuthUser | null> {
       name: session.user.name || "",
       email: session.user.email || "",
       role: (session.user as any).role || "",
+      farmId: (session.user as any).farmId ?? null,
     };
   } catch {
     return null;
@@ -34,6 +36,23 @@ export async function requireAuth(): Promise<AuthUser | NextResponse> {
     );
   }
   return user;
+}
+
+// ─── Multi-Tenant (Farm) Scoping ─────────────────────
+
+// The client may *request* a farm filter, but the effective scope always
+// comes from the session — never from a query parameter. Admins may scope to
+// any farm (or none); everyone else is pinned to their own farm.
+// NO_FARM_MATCH can never equal a real (cuid) id, so a user with no farm
+// assigned matches nothing instead of everything.
+export const NO_FARM_MATCH = "__no_farm__";
+
+export function resolveFarmScope(
+  user: AuthUser,
+  requested?: string | null
+): string | null {
+  if (user.role === "ADMIN") return requested || null;
+  return user.farmId || NO_FARM_MATCH;
 }
 
 // ─── Role-Based Access Control ──────────────────────────────

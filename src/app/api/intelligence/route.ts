@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireRole } from "@/lib/api-auth";
 
 // ─── Consumption Forecasting ───────────────────────────────
 // Uses weighted moving average of monthly consumption over last 6 months
@@ -278,6 +279,9 @@ async function computeAnomalies() {
 
 export async function GET(request: Request) {
   try {
+    // Cross-farm analytics: admin only. Farm-scoped dashboards use /api/reports.
+    const guard = await requireRole(["ADMIN"]);
+    if (guard instanceof NextResponse) return guard;
     const { searchParams } = new URL(request.url);
     const analysis = searchParams.get("analysis") || "all";
 

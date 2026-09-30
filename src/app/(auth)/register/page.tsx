@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FormSelect } from "@/components/ui/form-select";
 import { Sprout, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 
 export default function RegisterPage() {
@@ -17,7 +16,6 @@ export default function RegisterPage() {
     email: "",
     password: "",
     confirmPassword: "",
-    role: "FIELD_WORKER",
   });
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -62,7 +60,6 @@ export default function RegisterPage() {
           name: form.name,
           email: form.email,
           password: form.password,
-          role: form.role,
         }),
       });
 
@@ -159,20 +156,6 @@ export default function RegisterPage() {
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
               required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Role</Label>
-            <FormSelect
-              value={form.role}
-              onChange={(e) => setForm({ ...form, role: e.target.value })}
-              options={[
-                { value: "FIELD_WORKER", label: "Field Worker" },
-                { value: "WAREHOUSE_MANAGER", label: "Warehouse Manager" },
-                { value: "FARM_MANAGER", label: "Farm Manager" },
-                { value: "ACCOUNTANT", label: "Accountant" },
-              ]}
             />
           </div>
 

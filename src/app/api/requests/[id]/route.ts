@@ -28,6 +28,11 @@ export async function PATCH(
       return NextResponse.json({ error: "Request not found" }, { status: 404 });
     }
 
+    // Ownership: non-admins may only review requests from their own farm
+    if (user.role !== "ADMIN" && existing.farmId !== user.farmId) {
+      return NextResponse.json({ error: "Request belongs to another farm" }, { status: 403 });
+    }
+
     const updateData: any = {
       status,
       reviewedById: user.id,

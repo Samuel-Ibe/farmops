@@ -1,5 +1,5 @@
 {
-  "name": "FarmOps — Farm Inventory & Resource Intelligence",
+  "name": "FarmOps — Field operations & input stock",
   "short_name": "FarmOps",
   "description": "Digital farm inventory and resource management platform for tracking, managing, and optimizing agricultural inputs and operations.",
   "start_url": "/dashboard",
@@ -38,7 +38,7 @@
       "description": "View stock movements"
     },
     {
-      "name": "Intelligence",
+      "name": "Forecasting",
       "short_name": "AI Insights",
       "url": "/intelligence",
       "description": "View forecasting and recommendations"

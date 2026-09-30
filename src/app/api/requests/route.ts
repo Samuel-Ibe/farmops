@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope } from "@/lib/api-auth";
 import { validate, createRequestSchema } from "@/lib/api-validations";
 import { parsePaginationParams, paginatedResponse, cachedJsonResponse } from "@/lib/pagination";
 
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
-    const farmId = searchParams.get("farmId");
+    const farmId = resolveFarmScope(user, searchParams.get("farmId"));
     const pagination = parsePaginationParams(searchParams, { limit: 20 });
 
     const where = {
@@ -51,13 +53,19 @@ export async function POST(request: Request) {
 
     const { farmId, warehouseId, itemId, quantity, unitOfMeasure, purpose, priority } = validation.data;
 
+    // Non-admin requests are always stamped with the caller's own farm
+    const scopedFarmId = user.role === "ADMIN" ? farmId : user.farmId;
+    if (!scopedFarmId) {
+      return NextResponse.json({ error: "No farm assigned to your account" }, { status: 400 });
+    }
+
     const count = await prisma.resourceRequest.count();
     const now = new Date();
     const requestNumber = `REQ-${now.getFullYear().toString().slice(-2)}${(now.getMonth() + 1).toString().padStart(2, "0")}-${(count + 1).toString().padStart(4, "0")}`;
 
     const resourceRequest = await prisma.resourceRequest.create({
       data: {
-        requestNumber, requestedById: user.id, farmId,
+        requestNumber, requestedById: user.id, farmId: scopedFarmId,
         warehouseId: warehouseId || undefined,
         itemId, quantity, unitOfMeasure,
         purpose: purpose || undefined, priority,

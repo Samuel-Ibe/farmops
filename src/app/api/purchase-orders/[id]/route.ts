@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAuthUser, writeAuditLog } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog } from "@/lib/api-auth";
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await mutationGuard(request, { minRole: "FARM_MANAGER" });
+    if (user instanceof NextResponse) return user;
+
     const { id } = await params;
     const body = await request.json();
     const { status, notes, actualDeliveryDate } = body;
@@ -14,6 +17,11 @@ export async function PATCH(
     const po = await prisma.purchaseOrder.findUnique({ where: { id } });
     if (!po) {
       return NextResponse.json({ error: "Purchase order not found" }, { status: 404 });
+    }
+
+    // Ownership: non-admins may only touch POs belonging to their own farm
+    if (user.role !== "ADMIN" && po.farmId !== user.farmId) {
+      return NextResponse.json({ error: "Purchase order belongs to another farm" }, { status: 403 });
     }
 
     const updateData: any = {};
@@ -80,7 +88,6 @@ export async function PATCH(
     });
 
     // Audit log
-    const user = await getAuthUser();
     await writeAuditLog({
       userId: user?.id,
       action: status ? `STATUS_${status}` : "UPDATE",
@@ -102,6 +109,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await mutationGuard(request, { minRole: "ADMIN" });
+    if (user instanceof NextResponse) return user;
+
     const { id } = await params;
 
     const po = await prisma.purchaseOrder.findUnique({ where: { id } });

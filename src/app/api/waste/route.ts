@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope } from "@/lib/api-auth";
 import { validate, createWasteSchema } from "@/lib/api-validations";
 import { parsePaginationParams, cachedJsonResponse } from "@/lib/pagination";
 
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
-    const farmId = searchParams.get("farmId");
+    const farmId = resolveFarmScope(user, searchParams.get("farmId"));
     const pagination = parsePaginationParams(searchParams, { limit: 20 });
 
     const where = {
@@ -49,9 +51,18 @@ export async function POST(request: Request) {
 
     const { batchId, farmId, wasteType, quantity, estimatedValue, reason } = validation.data;
 
+    // Ownership: waste can only be reported against a batch in your own farm
+    const batch = await prisma.inventoryBatch.findUnique({ where: { id: batchId }, include: { warehouse: true } });
+    if (!batch) return NextResponse.json({ error: "Batch not found" }, { status: 404 });
+    if (user.role !== "ADMIN" && batch.warehouse?.farmId !== user.farmId) {
+      return NextResponse.json({ error: "Batch belongs to another farm" }, { status: 403 });
+    }
+
+    const scopedFarmId = user.role === "ADMIN" ? farmId : user.farmId || batch.warehouse?.farmId;
+
     const record = await prisma.wasteRecord.create({
       data: {
-        batchId, farmId, reportedById: user.id, wasteType, quantity,
+        batchId, farmId: scopedFarmId, reportedById: user.id, wasteType, quantity,
         estimatedValue: estimatedValue || undefined,
         reason: reason || undefined,
       },

@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { cachedJsonResponse } from "@/lib/pagination";
+import { requireAuth, resolveFarmScope } from "@/lib/api-auth";
 
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") || "dashboard";
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
-    const farmId = searchParams.get("farmId");
+    const farmId = resolveFarmScope(user, searchParams.get("farmId"));
 
     const txDateFilter: any = {};
     if (startDate) txDateFilter.gte = new Date(startDate);

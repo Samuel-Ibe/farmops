@@ -1,12 +1,25 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { mutationGuard } from "@/lib/api-auth";
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const guard = await mutationGuard(request, { minRole: "FARM_MANAGER" });
+    if (guard instanceof NextResponse) return guard;
     const { id } = await params;
+
+    // Tenant ownership: non-admins may only edit seasons on their own farm
+    const existing = await prisma.season.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "Season not found" }, { status: 404 });
+    }
+    if (guard.role !== "ADMIN" && existing.farmId !== guard.farmId) {
+      return NextResponse.json({ error: "Season belongs to another farm" }, { status: 403 });
+    }
+
     const body = await request.json();
     const { status, name, startDate, endDate, cropType } = body;
 
@@ -35,6 +48,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const guard = await mutationGuard(request, { minRole: "ADMIN" });
+    if (guard instanceof NextResponse) return guard;
     const { id } = await params;
 
     const season = await prisma.season.findUnique({ where: { id } });

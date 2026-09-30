@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, resolveFarmScope } from "@/lib/api-auth";
 
 /**
  * POST /api/batches/transfer
@@ -19,6 +19,7 @@ export async function POST(request: Request) {
   try {
     const user = await mutationGuard(request, { minRole: "WAREHOUSE_MANAGER" });
     if (user instanceof NextResponse) return user;
+    const farmScope = resolveFarmScope(user);
 
     const body = await request.json();
     const { batchId, toWarehouseId, quantity, notes } = body;
@@ -36,6 +37,11 @@ export async function POST(request: Request) {
     });
 
     if (!sourceBatch) {
+      return NextResponse.json({ error: "Source batch not found" }, { status: 404 });
+    }
+
+    // Ownership: non-admins may only move stock inside their own farm
+    if (farmScope !== null && sourceBatch.warehouse.farmId !== farmScope) {
       return NextResponse.json({ error: "Source batch not found" }, { status: 404 });
     }
 
@@ -64,6 +70,9 @@ export async function POST(request: Request) {
       where: { id: toWarehouseId },
     });
     if (!targetWarehouse) {
+      return NextResponse.json({ error: "Destination warehouse not found" }, { status: 404 });
+    }
+    if (farmScope !== null && targetWarehouse.farmId !== farmScope) {
       return NextResponse.json({ error: "Destination warehouse not found" }, { status: 404 });
     }
 

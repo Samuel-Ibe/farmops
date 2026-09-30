@@ -77,7 +77,7 @@ export function lowStockEmail(itemName: string, currentQty: number, unit: string
         </a>
       </div>
       <p style="text-align: center; color: #9ca3af; font-size: 12px; margin-top: 16px;">
-        FarmOps — Farm Inventory & Resource Intelligence
+        FarmOps — Field operations & input stock control
       </p>
     </div>
   `;

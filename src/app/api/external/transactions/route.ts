@@ -39,7 +39,13 @@ export async function GET(request: Request) {
     const where: Record<string, unknown> = {};
     if (type) where.type = type;
     if (batchId) where.batchId = batchId;
-    if (farmId) where.farmId = farmId;
+    // Tenant isolation: a farm-pinned key can never widen beyond its own farm
+    const keyFarmId = auth.apiKey.farmId;
+    if (keyFarmId) {
+      where.farmId = keyFarmId; // pinned — any requested farmId is ignored
+    } else if (farmId) {
+      where.farmId = farmId;
+    }
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) (where.createdAt as Record<string, unknown>).gte = new Date(startDate);

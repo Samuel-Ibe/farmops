@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { createApiKey, listApiKeys, revokeApiKey } from "@/lib/api-keys";
-import { mutationGuard } from "@/lib/api-auth";
+import { mutationGuard, requireRole } from "@/lib/api-auth";
 
 /**
  * GET /api/api-keys
- * List all API keys
+ * List all API keys (admin only — reveals key metadata)
  */
 export async function GET() {
+  const user = await requireRole(["ADMIN"]);
+  if (user instanceof NextResponse) return user;
   const keys = listApiKeys();
   // Mask keys for display
   const masked = keys.map((k) => ({
@@ -14,6 +16,7 @@ export async function GET() {
     name: k.name,
     keyPreview: k.key.slice(0, 12) + "..." + k.key.slice(-4),
     permissions: k.permissions,
+    farmId: k.farmId ?? null,
     isActive: k.isActive,
     createdAt: k.createdAt,
     lastUsedAt: k.lastUsedAt,
@@ -33,7 +36,7 @@ export async function POST(request: Request) {
     if (user instanceof NextResponse) return user;
 
     const body = await request.json();
-    const { name, permissions } = body;
+    const { name, permissions, farmId } = body;
 
     if (!name || !permissions || !Array.isArray(permissions)) {
       return NextResponse.json(
@@ -42,7 +45,16 @@ export async function POST(request: Request) {
       );
     }
 
-    const apiKey = createApiKey(name, permissions);
+    // Optionally pin the key to a single farm for tenant isolation
+    if (farmId) {
+      const { prisma } = await import("@/lib/prisma");
+      const farm = await prisma.farm.findUnique({ where: { id: farmId }, select: { id: true } });
+      if (!farm) {
+        return NextResponse.json({ error: "Unknown farmId" }, { status: 400 });
+      }
+    }
+
+    const apiKey = createApiKey(name, permissions, farmId || null);
     // Return the full key only on creation
     return NextResponse.json(apiKey, { status: 201 });
   } catch (error) {

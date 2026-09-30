@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope } from "@/lib/api-auth";
 import { validate, createInventoryItemSchema } from "@/lib/api-validations";
 import { parsePaginationParams, paginatedResponse, cachedJsonResponse } from "@/lib/pagination";
 
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search") || "";
     const categoryId = searchParams.get("categoryId");
-    const farmId = searchParams.get("farmId");
+    const farmId = resolveFarmScope(user, searchParams.get("farmId"));
     const pagination = parsePaginationParams(searchParams, { limit: 50 });
 
     // If searching, don't paginate (return all matches for search dropdown)

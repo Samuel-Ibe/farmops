@@ -9,6 +9,9 @@ export interface ApiKey {
   createdAt: string;
   lastUsedAt?: string;
   usageCount: number;
+  /** Tenant binding: a key without farmId may read across farms (admin-issued
+   *  integration key). A key with farmId is pinned to that single farm. */
+  farmId?: string | null;
 }
 
 // In-memory store (for demo; production would use DB)
@@ -18,7 +21,7 @@ function generateApiKey(): string {
   return `fops_${crypto.randomBytes(32).toString("hex")}`;
 }
 
-export function createApiKey(name: string, permissions: string[]): ApiKey {
+export function createApiKey(name: string, permissions: string[], farmId?: string | null): ApiKey {
   const id = `key_${Date.now().toString(36)}`;
   const key = generateApiKey();
   const apiKey: ApiKey = {
@@ -29,6 +32,7 @@ export function createApiKey(name: string, permissions: string[]): ApiKey {
     isActive: true,
     createdAt: new Date().toISOString(),
     usageCount: 0,
+    farmId: farmId ?? null,
   };
   apiKeys.set(id, apiKey);
   // Also store by key for lookup

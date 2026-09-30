@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, hasMinRole, writeAuditLog, getClientIp, mutationGuard } from "@/lib/api-auth";
+import { requireAuth, writeAuditLog, getClientIp, mutationGuard } from "@/lib/api-auth";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
+
     const { id } = await params;
 
     const transaction = await prisma.stockTransaction.findUnique({
@@ -22,6 +25,11 @@ export async function GET(
 
     if (!transaction) {
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+    }
+
+    // Ownership: non-admins only see their own farm's transactions
+    if (user.role !== "ADMIN" && transaction.farmId !== user.farmId) {
+      return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
 
     return NextResponse.json(transaction);
@@ -47,11 +55,17 @@ export async function PATCH(
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     }
 
+    // Ownership: non-admins may only edit their own farm's transactions
+    if (user.role !== "ADMIN" && existing.farmId !== user.farmId) {
+      return NextResponse.json({ error: "Transaction belongs to another farm" }, { status: 403 });
+    }
+
     // Transactions are mostly immutable, but allow updating reason and referenceNumber
     const allowedFields: Record<string, any> = {};
     if (body.reason !== undefined) allowedFields.reason = body.reason;
     if (body.referenceNumber !== undefined) allowedFields.referenceNumber = body.referenceNumber;
-    if (body.farmId !== undefined) allowedFields.farmId = body.farmId;
+    // Re-stamping farmId is an admin-only correction
+    if (body.farmId !== undefined && user.role === "ADMIN") allowedFields.farmId = body.farmId;
 
     if (Object.keys(allowedFields).length === 0) {
       return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });

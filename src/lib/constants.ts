@@ -212,7 +212,7 @@ export const NAV_ITEMS = [
   { label: "Farms", href: "/farms", icon: "Tractor" },
   { label: "Suppliers", href: "/suppliers", icon: "Truck" },
   { label: "QR Scanner", href: "/qr", icon: "QrCode" },
-  { label: "Intelligence", href: "/intelligence", icon: "Brain" },
+  { label: "Forecasting", href: "/intelligence", icon: "TrendingUp" },
   { label: "Alerts", href: "/alerts", icon: "AlertTriangle" },
   { label: "Purchase Orders", href: "/purchase-orders", icon: "FileText" },
   { label: "Waste", href: "/waste", icon: "Trash2" },

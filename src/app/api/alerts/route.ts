@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { cachedJsonResponse } from "@/lib/pagination";
+import { mutationGuard, requireAuth, resolveFarmScope } from "@/lib/api-auth";
 
 /**
  * GET /api/alerts
@@ -12,9 +13,15 @@ import { cachedJsonResponse } from "@/lib/pagination";
  */
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") || "all";
     const daysAhead = parseInt(searchParams.get("daysAhead") || "90", 10);
+    const farmScope = resolveFarmScope(user, searchParams.get("farmId"));
+    // Non-admin with no farm matches nothing; admin with no filter sees all.
+    const warehouseWhere =
+      farmScope === null ? {} : { warehouse: { farmId: farmScope } };
 
     const now = new Date();
     const futureDate = new Date();
@@ -34,6 +41,7 @@ export async function GET(request: Request) {
           status: "ACTIVE",
           expiryDate: { not: null, lte: futureDate },
           quantityRemaining: { gt: 0 },
+          ...warehouseWhere,
         },
         include: {
           item: true,
@@ -78,11 +86,19 @@ export async function GET(request: Request) {
     // ─── Low Stock Alerts ───────────────────────────────
     if (type === "all" || type === "low_stock") {
       const items = await prisma.inventoryItem.findMany({
-        where: { isActive: true },
+        where: {
+          isActive: true,
+          ...(farmScope === null
+            ? {}
+            : { batches: { some: { status: "ACTIVE", ...warehouseWhere } } }),
+        },
         include: {
           category: true,
           batches: {
-            where: { status: "ACTIVE" },
+            where: {
+              status: "ACTIVE",
+              ...(farmScope === null ? {} : { warehouse: { farmId: farmScope } }),
+            },
             include: { warehouse: true },
           },
         },
@@ -189,6 +205,8 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
+    const guard = await mutationGuard(request, { minRole: "WAREHOUSE_MANAGER" });
+    if (guard instanceof NextResponse) return guard;
     const body = await request.json().catch(() => ({}));
     const daysAhead = body.daysAhead || 30;
     const now = new Date();
@@ -197,8 +215,17 @@ export async function POST(request: Request) {
 
     let created = 0;
 
-    // Get all active users
-    const users = await prisma.user.findMany({ where: { isActive: true } });
+    // Notify only users in the caller's farm scope (admins can hit all farms)
+    const farmScope = resolveFarmScope(guard);
+    const users = await prisma.user.findMany({
+      where: {
+        isActive: true,
+        ...(farmScope === null ? {} : { farmId: farmScope }),
+      },
+    });
+    if (users.length === 0) {
+      return NextResponse.json({ message: "Created 0 notifications", expiringBatches: 0, lowStockItems: 0 });
+    }
 
     // Check expiry alerts
     const expiringBatches = await prisma.inventoryBatch.findMany({
@@ -206,6 +233,7 @@ export async function POST(request: Request) {
         status: "ACTIVE",
         expiryDate: { not: null, lte: futureDate },
         quantityRemaining: { gt: 0 },
+        ...(farmScope === null ? {} : { warehouse: { farmId: farmScope } }),
       },
       include: { item: true },
     });
@@ -255,9 +283,27 @@ export async function POST(request: Request) {
 
     // Check low stock alerts
     const items = await prisma.inventoryItem.findMany({
-      where: { isActive: true, reorderPoint: { not: null } },
+      where: {
+        isActive: true,
+        reorderPoint: { not: null },
+        ...(farmScope === null
+          ? {}
+          : {
+              batches: {
+                some: {
+                  status: "ACTIVE",
+                  warehouse: { farmId: farmScope },
+                },
+              },
+            }),
+      },
       include: {
-        batches: { where: { status: "ACTIVE" } },
+        batches: {
+          where: {
+            status: "ACTIVE",
+            ...(farmScope === null ? {} : { warehouse: { farmId: farmScope } }),
+          },
+        },
       },
     });
 

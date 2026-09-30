@@ -13,7 +13,7 @@ export default function AuthLayout({
           <Sprout className="h-16 w-16 mx-auto mb-6" />
           <h1 className="text-4xl font-bold mb-4">FarmOps</h1>
           <p className="text-xl text-green-100 mb-2">
-            Farm Inventory & Resource Intelligence
+            Field operations & input stock control
           </p>
           <p className="text-green-200 max-w-md">
             Know exactly what you have, where it is, and what you need.

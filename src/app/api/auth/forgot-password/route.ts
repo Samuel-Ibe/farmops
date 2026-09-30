@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, rateLimitResponse, getClientIp } from "@/lib/api-auth";
 import crypto from "crypto";
+import { sendEmail } from "@/lib/email";
+
+// Only the SHA-256 digest of a reset token is ever persisted or logged.
+// The raw token exists only in the email we send to the token's owner.
+function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
 
 export async function POST(request: Request) {
   try {
@@ -26,22 +33,32 @@ export async function POST(request: Request) {
     if (user) {
       // Generate a secure token
       const token = crypto.randomBytes(32).toString("hex");
-      const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      const tokenHash = hashToken(token);
 
-      // Store as a notification with the token in message (simple approach)
-      // In production, use a dedicated PasswordReset table
+      // Invalidate any outstanding reset tokens for this account
+      await prisma.notification.deleteMany({
+        where: { userId: user.id, message: { startsWith: "RESET_TOKEN:" } },
+      });
+
+      // Store only the digest; a DB reader can't redeem it
       await prisma.notification.create({
         data: {
           userId: user.id,
           title: "Password Reset",
-          message: `RESET_TOKEN:${token}`,
+          message: `RESET_TOKEN:${tokenHash}`,
           type: "STOCK_ADJUSTED",
         },
       });
 
-      // In a real app, send email here
-      console.log(`[Password Reset] Token for ${email}: ${token}`);
-      console.log(`[Password Reset] Reset URL: ${process.env.NEXTAUTH_URL || "http://localhost:3000"}/auth/reset-password?token=${token}`);
+      const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+      await sendEmail({
+        to: user.email,
+        subject: "Reset your FarmOps password",
+        html: `<p>Use the link below to reset your password (valid for 1 hour):</p>
+               <p><a href="${baseUrl}/reset-password?token=${token}">${baseUrl}/reset-password?token=${token}</a></p>
+               <p>If you didn't request this, you can safely ignore this email.</p>`,
+        text: `Reset your password: ${baseUrl}/reset-password?token=${token} (valid 1 hour)`,
+      });
     }
 
     return NextResponse.json({

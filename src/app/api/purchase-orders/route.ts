@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope } from "@/lib/api-auth";
 import { validate, createPurchaseOrderSchema } from "@/lib/api-validations";
 import { parsePaginationParams, cachedJsonResponse } from "@/lib/pagination";
 
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
-    const farmId = searchParams.get("farmId");
+    const farmId = resolveFarmScope(user, searchParams.get("farmId"));
     const pagination = parsePaginationParams(searchParams, { limit: 20 });
 
     const where = {
@@ -48,6 +50,13 @@ export async function POST(request: Request) {
     }
 
     const { supplierId, farmId, items, expectedDeliveryDate, notes } = validation.data;
+
+    // Non-admin POs are always stamped with the caller's own farm
+    const scopedFarmId = user.role === "ADMIN" ? farmId : user.farmId;
+    if (!scopedFarmId) {
+      return NextResponse.json({ error: "No farm assigned to your account" }, { status: 400 });
+    }
+
     const count = await prisma.purchaseOrder.count();
     const now = new Date();
     const orderNumber = `PO-${now.getFullYear().toString().slice(-2)}${(now.getMonth() + 1).toString().padStart(2, "0")}-${(count + 1).toString().padStart(4, "0")}`;
@@ -55,7 +64,7 @@ export async function POST(request: Request) {
 
     const order = await prisma.purchaseOrder.create({
       data: {
-        orderNumber, supplierId, farmId, createdById: user.id, totalAmount,
+        orderNumber, supplierId, farmId: scopedFarmId, createdById: user.id, totalAmount,
         expectedDeliveryDate: expectedDeliveryDate ? new Date(expectedDeliveryDate) : null,
         notes: notes || undefined,
         items: { create: items.map((item: any) => ({ itemId: item.itemId, quantity: item.quantity, unitPrice: item.unitPrice, totalPrice: item.quantity * item.unitPrice })) },

@@ -54,6 +54,8 @@ export default function SettingsPage() {
     toast("Settings saved", "success");
   };
 
+  // Always render all links — use className hidden to hide admin-only ones
+  // This ensures server and client produce identical HTML on first render
   const managementLinks = [
     {
       href: "/settings/users",
@@ -91,26 +93,24 @@ export default function SettingsPage() {
       {/* Quick Management Links */}
       <div className="grid gap-4 sm:grid-cols-2">
         {managementLinks.map((link) => (
-          <div key={link.href} hidden={!isAdmin && link.adminOnly}>
-            <Link href={link.href}>
-              <Card className="hover:shadow-md transition-shadow cursor-pointer">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`rounded-lg p-2 ${link.color}`}>
-                        <link.icon className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <p className="font-medium">{link.title}</p>
-                        <p className="text-xs text-muted-foreground">{link.description}</p>
-                      </div>
+          <Link key={link.href} href={link.href} className={link.adminOnly && !isAdmin ? "hidden" : undefined}>
+            <Card className="hover:shadow-md transition-shadow cursor-pointer">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`rounded-lg p-2 ${link.color}`}>
+                      <link.icon className="h-5 w-5" />
                     </div>
-                    <ArrowRight className="h-5 w-5 text-muted-foreground" />
+                    <div>
+                      <p className="font-medium">{link.title}</p>
+                      <p className="text-xs text-muted-foreground">{link.description}</p>
+                    </div>
                   </div>
-                </CardContent>
-              </Card>
-            </Link>
-          </div>
+                  <ArrowRight className="h-5 w-5 text-muted-foreground" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
         ))}
       </div>
 
@@ -139,7 +139,7 @@ export default function SettingsPage() {
               disabled
             />
           </div>
-          <div className="flex items-center gap-2" hidden={!isAdmin}>
+          <div className={`flex items-center gap-2 ${!isAdmin ? "hidden" : ""}`}>
             <span className="text-sm font-medium text-muted-foreground">Role:</span>
             <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
               <Shield className="h-3 w-3 mr-1" />
@@ -206,7 +206,7 @@ export default function SettingsPage() {
       </Card>
 
       {/* Security - Admin only */}
-      <Card hidden={!isAdmin}>
+      <Card className={!isAdmin ? "hidden" : undefined}>
         <CardHeader>
           <div className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-muted-foreground" />

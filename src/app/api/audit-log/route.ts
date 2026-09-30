@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireRole } from "@/lib/api-auth";
 
 export async function GET(request: Request) {
   try {
+    const guard = await requireRole(["ADMIN"]);
+    if (guard instanceof NextResponse) return guard;
     const { searchParams } = new URL(request.url);
     const entity = searchParams.get("entity");
     const entityId = searchParams.get("entityId");

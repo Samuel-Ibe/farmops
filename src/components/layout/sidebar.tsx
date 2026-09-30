@@ -24,6 +24,7 @@ import {
   Bell,
   Settings,
   Brain,
+  TrendingUp,
   AlertTriangle,
 } from "lucide-react";
 
@@ -45,6 +46,7 @@ const iconMap: Record<string, React.ReactNode> = {
   Bell: <Bell className="h-5 w-5" />,
   Settings: <Settings className="h-5 w-5" />,
   Brain: <Brain className="h-5 w-5" />,
+  TrendingUp: <TrendingUp className="h-5 w-5" />,
   AlertTriangle: <AlertTriangle className="h-5 w-5" />,
 };
 
@@ -80,7 +82,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
           <div>
             <h1 className="text-lg font-bold text-foreground">FarmOps</h1>
             <p className="text-[10px] text-muted-foreground -mt-1">
-              Resource Intelligence
+              Season &amp; stock control
             </p>
           </div>
         </div>

@@ -3,7 +3,7 @@ import "./globals.css";
 import { SWRegister } from "@/components/sw-register";
 
 export const metadata: Metadata = {
-  title: "FarmOps — Farm Inventory & Resource Intelligence",
+  title: "FarmOps — Field operations & input stock for farms",
   description:
     "Digital farm inventory and resource management platform for tracking, managing, and optimizing agricultural inputs and operations.",
   manifest: "/manifest.json",

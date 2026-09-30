@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { mutationGuard, requireAuth, resolveFarmScope } from "@/lib/api-auth";
 
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
     const code = searchParams.get("code") || "";
 
@@ -10,9 +13,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "No code provided" }, { status: 400 });
     }
 
+    // Non-admins only ever see batches inside their own farm
+    const farmScope = resolveFarmScope(user);
+    const scopeWhere = farmScope !== null ? { warehouse: { farmId: farmScope } } : {};
+
     // Try to find by batch number first
     let batch = await prisma.inventoryBatch.findFirst({
-      where: { batchNumber: { contains: code, mode: "insensitive" } },
+      where: { batchNumber: { contains: code, mode: "insensitive" }, ...scopeWhere },
       include: {
         item: {
           include: { category: true },
@@ -27,7 +34,7 @@ export async function GET(request: Request) {
     // Try by barcode
     if (!batch) {
       batch = await prisma.inventoryBatch.findFirst({
-        where: { barcode: { contains: code, mode: "insensitive" } },
+        where: { barcode: { contains: code, mode: "insensitive" }, ...scopeWhere },
         include: {
           item: { include: { category: true } },
           warehouse: { include: { farm: true } },
@@ -39,7 +46,7 @@ export async function GET(request: Request) {
     // Try by QR code data
     if (!batch) {
       batch = await prisma.inventoryBatch.findFirst({
-        where: { qrCodeData: { contains: code, mode: "insensitive" } },
+        where: { qrCodeData: { contains: code, mode: "insensitive" }, ...scopeWhere },
         include: {
           item: { include: { category: true } },
           warehouse: { include: { farm: true } },
@@ -51,11 +58,14 @@ export async function GET(request: Request) {
     // Try to find by item name (fuzzy)
     if (!batch) {
       const item = await prisma.inventoryItem.findFirst({
-        where: { name: { contains: code, mode: "insensitive" } },
+        where: {
+          name: { contains: code, mode: "insensitive" },
+          ...(farmScope !== null && { batches: { some: { status: "ACTIVE", ...scopeWhere } } }),
+        },
         include: {
           category: true,
           batches: {
-            where: { status: "ACTIVE" },
+            where: { status: "ACTIVE", ...scopeWhere },
             include: {
               warehouse: { include: { farm: true } },
             },
@@ -128,6 +138,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const guard = await mutationGuard(request, { minRole: "WAREHOUSE_MANAGER" });
+    if (guard instanceof NextResponse) return guard;
     const body = await request.json();
     const { batchId } = body;
 

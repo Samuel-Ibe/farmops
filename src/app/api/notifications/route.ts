@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/api-auth";
 
 export async function GET() {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
+
     const notifications = await prisma.notification.findMany({
+      where: { userId: user.id },
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json(notifications);
@@ -18,9 +23,12 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   try {
-    // Mark all as read
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
+
+    // Mark only this user's notifications as read
     await prisma.notification.updateMany({
-      where: { isRead: false },
+      where: { userId: user.id, isRead: false },
       data: { isRead: true },
     });
     return NextResponse.json({ success: true });

@@ -1,4 +1,5 @@
-// FarmOps — Farm Inventory & Resource Intelligence Platform
+// FarmOps — field operations, input stock, and harvest accounting for farms.
+// See /docs/data-model.md for the domain narrative and /docs/adr for decisions.
 // Prisma Schema
 
 generator client {

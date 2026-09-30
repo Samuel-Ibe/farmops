@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { mutationGuard, requireAuth } from "@/lib/api-auth";
 
 export async function GET() {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const categories = await prisma.category.findMany({
       orderBy: { name: "asc" },
     });
@@ -18,6 +21,8 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const guard = await mutationGuard(request, { minRole: "FARM_MANAGER" });
+    if (guard instanceof NextResponse) return guard;
     const body = await request.json();
     const { name, color, description, icon } = body;
 

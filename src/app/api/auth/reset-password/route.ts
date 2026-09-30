@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, rateLimitResponse, getClientIp } from "@/lib/api-auth";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
+
+// Matches how the token is stored by /api/auth/forgot-password
+function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
 
 export async function POST(request: Request) {
   try {
@@ -32,11 +38,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Password must contain a number" }, { status: 400 });
     }
 
-    // Find the notification with this token
+    // Find the notification storing the digest of this token
     const notification = await prisma.notification.findFirst({
       where: {
         type: "STOCK_ADJUSTED",
-        message: { contains: `RESET_TOKEN:${token}` },
+        message: `RESET_TOKEN:${hashToken(token)}`,
       },
       orderBy: { createdAt: "desc" },
     });
@@ -59,8 +65,10 @@ export async function POST(request: Request) {
       data: { password: hashedPassword },
     });
 
-    // Delete the reset token notification
-    await prisma.notification.delete({ where: { id: notification.id } });
+    // Single-use: drop every outstanding reset token for this account
+    await prisma.notification.deleteMany({
+      where: { userId: notification.userId, message: { startsWith: "RESET_TOKEN:" } },
+    });
 
     return NextResponse.json({ message: "Password reset successful" });
   } catch (error) {

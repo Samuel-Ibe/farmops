@@ -16,7 +16,7 @@ const navItems = [
   { href: "/inventory", label: "Stock", icon: Package },
   { href: "/transactions", label: "Move", icon: ArrowLeftRight },
   { href: "/qr", label: "Scan", icon: QrCode },
-  { href: "/intelligence", label: "AI", icon: Brain },
+  { href: "/intelligence", label: "Forecast", icon: Brain },
 ];
 
 export function MobileBottomNav() {

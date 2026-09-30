@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import ExcelJS from "exceljs";
+import { requireAuth, resolveFarmScope } from "@/lib/api-auth";
 
 /**
  * GET /api/export/excel
@@ -15,12 +16,14 @@ import ExcelJS from "exceljs";
  */
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") || "inventory";
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
     const warehouseId = searchParams.get("warehouseId");
-    const farmId = searchParams.get("farmId");
+    const farmId = resolveFarmScope(user, searchParams.get("farmId"));
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "FarmOps";
@@ -34,12 +37,17 @@ export async function GET(request: Request) {
 
     // ─── Inventory Sheet ────────────────────────────────
     if (type === "inventory" || type === "all") {
+      const invBatchWhere: Record<string, unknown> = { status: "ACTIVE" };
+      if (farmId) invBatchWhere.warehouse = { farmId };
       const items = await prisma.inventoryItem.findMany({
-        where: { isActive: true },
+        where: {
+          isActive: true,
+          ...(farmId ? { batches: { some: invBatchWhere } } : {}),
+        },
         include: {
           category: true,
           batches: {
-            where: { status: "ACTIVE" },
+            where: invBatchWhere,
             include: { warehouse: true, supplier: true },
           },
         },
@@ -91,6 +99,7 @@ export async function GET(request: Request) {
     // ─── Transactions Sheet ─────────────────────────────
     if (type === "transactions" || type === "all") {
       const where: Record<string, unknown> = {};
+      if (farmId) where.farmId = farmId;
       if (hasDateFilter) where.createdAt = dateFilter;
       if (warehouseId) {
         where.OR = [
@@ -149,6 +158,7 @@ export async function GET(request: Request) {
     // ─── Batches Sheet ──────────────────────────────────
     if (type === "batches" || type === "all") {
       const batchWhere: Record<string, unknown> = {};
+      if (farmId) batchWhere.warehouse = { farmId };
       if (warehouseId) batchWhere.warehouseId = warehouseId;
 
       const batches = await prisma.inventoryBatch.findMany({
@@ -198,6 +208,7 @@ export async function GET(request: Request) {
     // ─── Waste Sheet ────────────────────────────────────
     if (type === "waste" || type === "all") {
       const wasteWhere: Record<string, unknown> = {};
+      if (farmId) wasteWhere.farmId = farmId;
       if (hasDateFilter) wasteWhere.reportedAt = dateFilter;
 
       const waste = await prisma.wasteRecord.findMany({

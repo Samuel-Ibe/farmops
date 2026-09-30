@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import PDFDocument from "pdfkit";
+import { requireAuth, resolveFarmScope } from "@/lib/api-auth";
 
 /**
  * GET /api/export/pdf
@@ -11,8 +12,11 @@ import PDFDocument from "pdfkit";
  */
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") || "summary";
+    const farmId = resolveFarmScope(user, searchParams.get("farmId"));
 
     const doc = new PDFDocument({
       size: "A4",
@@ -45,11 +49,16 @@ export async function GET(request: Request) {
 
     // ─── Inventory Summary ──────────────────────────────
     if (type === "inventory" || type === "summary" || type === "valuation") {
+      const batchWhere: Record<string, unknown> = { status: "ACTIVE" };
+      if (farmId) batchWhere.warehouse = { farmId };
       const items = await prisma.inventoryItem.findMany({
-        where: { isActive: true },
+        where: {
+          isActive: true,
+          ...(farmId ? { batches: { some: batchWhere } } : {}),
+        },
         include: {
           category: true,
-          batches: { where: { status: "ACTIVE" } },
+          batches: { where: batchWhere },
         },
         orderBy: { name: "asc" },
       });
@@ -140,6 +149,7 @@ export async function GET(request: Request) {
     // ─── Waste Summary ──────────────────────────────────
     if (type === "waste" || type === "summary") {
       const waste = await prisma.wasteRecord.findMany({
+        where: farmId ? { farmId } : {},
         include: {
           batch: { include: { item: true } },
           farm: true,

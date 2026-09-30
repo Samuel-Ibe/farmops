@@ -8,7 +8,8 @@
     "farms": "Farms",
     "suppliers": "Suppliers",
     "qrScanner": "QR Scanner",
-    "intelligence": "Intelligence",
+    "intelligence": "Forecasting",
+    "forecasting": "Forecasting",
     "alerts": "Alerts",
     "purchaseOrders": "Purchase Orders",
     "waste": "Waste",
@@ -255,7 +256,7 @@
     "createPO": "Create PO"
   },
   "intelligence": {
-    "title": "Intelligence",
+    "title": "Forecasting Engine",
     "forecasting": "Consumption Forecasting",
     "reorderRecommendations": "Reorder Recommendations",
     "anomalyDetection": "Anomaly Detection",

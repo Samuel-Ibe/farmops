@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAuthUser, writeAuditLog } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog } from "@/lib/api-auth";
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await mutationGuard(request, { minRole: "WAREHOUSE_MANAGER" });
+    if (user instanceof NextResponse) return user;
+
     const { id } = await params;
     const body = await request.json();
     const {
@@ -42,9 +45,8 @@ export async function PATCH(
     });
 
     // Audit log
-    const user = await getAuthUser();
     await writeAuditLog({
-      userId: user?.id,
+      userId: user.id,
       action: "UPDATE",
       entity: "InventoryItem",
       entityId: id,
@@ -66,6 +68,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await mutationGuard(request, { minRole: "ADMIN" });
+    if (user instanceof NextResponse) return user;
+
     const { id } = await params;
 
     const item = await prisma.inventoryItem.findUnique({

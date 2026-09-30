@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope } from "@/lib/api-auth";
 import { validate, createStockCountSchema } from "@/lib/api-validations";
 import { parsePaginationParams, cachedJsonResponse } from "@/lib/pagination";
 
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
+    const farmScope = resolveFarmScope(user, searchParams.get("farmId"));
+    const where = farmScope !== null ? { warehouse: { farmId: farmScope } } : {};
     const pagination = parsePaginationParams(searchParams, { limit: 20 });
     const [counts, total] = await Promise.all([
       prisma.stockCount.findMany({
+        where,
         include: {
           warehouse: true,
           countedBy: { select: { name: true, role: true } },
@@ -19,7 +24,7 @@ export async function GET(request: Request) {
         skip: pagination.offset,
         take: pagination.limit,
       }),
-      prisma.stockCount.count(),
+      prisma.stockCount.count({ where }),
     ]);
     return cachedJsonResponse(counts, 30);
   } catch (error) {
@@ -38,6 +43,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: validation.error, details: validation.details }, { status: 400 });
     }
     const { warehouseId, items, notes } = validation.data;
+    // Ownership: non-admins can only count warehouses inside their own farm
+    const farmScope = resolveFarmScope(user);
+    const warehouse = await prisma.warehouse.findFirst({
+      where: {
+        id: warehouseId,
+        ...(farmScope !== null ? { farmId: farmScope } : {}),
+      },
+      select: { id: true },
+    });
+    if (!warehouse) {
+      return NextResponse.json({ error: "Warehouse not found" }, { status: 404 });
+    }
     const stockCount = await prisma.stockCount.create({
       data: {
         warehouseId, countedById: user.id, countDate: new Date(),

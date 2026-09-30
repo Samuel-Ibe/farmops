@@ -39,8 +39,7 @@ export default function IntelligencePage() {
         setData(await res.json());
       }
     } catch (err) {
-      console.error("Failed to fetch intelligence data:", err);
-      toast("Failed to load intelligence data", "error");
+      console.error("Failed to fetch intelligence data:", err);        toast("Failed to load forecast data", "error");
     } finally {
       setLoading(false);
     }
@@ -53,7 +52,10 @@ export default function IntelligencePage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Inventory Intelligence" description="AI-powered forecasting and recommendations" />
+        <PageHeader
+          title="Forecasting Engine"
+          description="Six-month weighted moving-average forecasts, reorder thresholds, and anomaly flags"
+        />
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <Loader2 className="h-12 w-12 animate-spin text-green-600 mx-auto" />
@@ -68,8 +70,8 @@ export default function IntelligencePage() {
   if (!data) {
     return (
       <div className="text-center py-20">
-        <Brain className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-        <p className="text-lg font-medium">No intelligence data available</p>
+        <TrendingUp className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+        <p className="text-lg font-medium">No forecast data available</p>
         <Button onClick={fetchIntelligence} variant="outline" className="mt-4">
           <RefreshCw className="h-4 w-4 mr-2" />
           Retry
@@ -91,8 +93,8 @@ export default function IntelligencePage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Inventory Intelligence"
-        description="AI-powered forecasting, reorder recommendations, and anomaly detection"
+        title="Forecasting Engine"
+        description="Weighted moving-average consumption forecasts, stock thresholds, and anomaly detection"
       >
         <Button variant="outline" onClick={fetchIntelligence}>
           <RefreshCw className="h-4 w-4 mr-2" />
@@ -177,7 +179,7 @@ export default function IntelligencePage() {
         <TabsContent value="forecast" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Consumption Forecasting</CardTitle>
+              <CardTitle>Consumption Forecast</CardTitle>
               <CardDescription>
                 Weighted moving average prediction based on 6 months of transaction data
               </CardDescription>

@@ -37,6 +37,9 @@ export async function GET(request: Request) {
     const where: Record<string, unknown> = { isActive: true };
     if (search) where.name = { contains: search, mode: "insensitive" };
     if (categoryId) where.categoryId = categoryId;
+    // Tenant isolation: a farm-pinned key only ever reads its own farm's stock
+    const keyFarmId = auth.apiKey.farmId;
+    if (keyFarmId) where.batches = { some: { warehouse: { farmId: keyFarmId } } };
 
     const [items, total] = await Promise.all([
       prisma.inventoryItem.findMany({
@@ -44,7 +47,10 @@ export async function GET(request: Request) {
         include: {
           category: { select: { id: true, name: true } },
           batches: {
-            where: status === "ALL" ? {} : { status: status as any },
+            where: {
+              ...(status === "ALL" ? {} : { status: status as any }),
+              ...(keyFarmId ? { warehouse: { farmId: keyFarmId } } : {}),
+            },
             select: {
               id: true,
               batchNumber: true,

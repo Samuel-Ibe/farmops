@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, resolveFarmScope } from "@/lib/api-auth";
 
 function toCSV(rows: Record<string, any>[], headers: string[]): string {
   const escape = (val: any) => {
@@ -19,20 +20,24 @@ function toCSV(rows: Record<string, any>[], headers: string[]): string {
 
 export async function GET(request: Request) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") || "inventory";
-    const farmId = searchParams.get("farmId");
+    const farmId = resolveFarmScope(user, searchParams.get("farmId"));
 
     if (type === "inventory") {
+      const batchWhere: Record<string, unknown> = { status: "ACTIVE" };
+      if (farmId) batchWhere.warehouse = { farmId };
       const items = await prisma.inventoryItem.findMany({
-        where: { isActive: true },
+        where: {
+          isActive: true,
+          ...(farmId ? { batches: { some: batchWhere } } : {}),
+        },
         include: {
           category: true,
           defaultSupplier: true,
-          batches: {
-            where: { status: "ACTIVE" },
-            include: { warehouse: { include: { farm: true } } },
-          },
+          batches: { where: batchWhere, include: { warehouse: { include: { farm: true } } } },
         },
         orderBy: { name: "asc" },
       });

@@ -7,6 +7,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await getAuthUser();
+    if (!user) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+
     const { id } = await params;
 
     const notification = await prisma.notification.findUnique({
@@ -15,6 +20,11 @@ export async function GET(
 
     if (!notification) {
       return NextResponse.json({ error: "Notification not found" }, { status: 404 });
+    }
+
+    // Owners only (admins may inspect for support purposes)
+    if (notification.userId !== user.id && user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
 
     return NextResponse.json(notification);

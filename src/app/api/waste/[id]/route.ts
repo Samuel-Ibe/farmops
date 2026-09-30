@@ -16,6 +16,11 @@ export async function DELETE(
       return NextResponse.json({ error: "Record not found" }, { status: 404 });
     }
 
+    // Ownership: non-admins may only delete waste records from their own farm
+    if (user.role !== "ADMIN" && record.farmId !== user.farmId) {
+      return NextResponse.json({ error: "Record belongs to another farm" }, { status: 403 });
+    }
+
     await prisma.wasteRecord.delete({ where: { id } });
 
     await writeAuditLog({

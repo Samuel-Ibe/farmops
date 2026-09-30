@@ -1,16 +1,24 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope } from "@/lib/api-auth";
+
+// Stock counts are scoped to the warehouse's farm
+function farmScopeWhere(user: { role: string; farmId?: string | null }) {
+  const farmScope = resolveFarmScope(user as any);
+  return farmScope !== null ? { warehouse: { farmId: farmScope } } : {};
+}
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await requireAuth();
+    if (user instanceof NextResponse) return user;
     const { id } = await params;
 
-    const stockCount = await prisma.stockCount.findUnique({
-      where: { id },
+    const stockCount = await prisma.stockCount.findFirst({
+      where: { id, ...farmScopeWhere(user) },
       include: {
         warehouse: true,
         countedBy: { select: { name: true, role: true } },
@@ -46,8 +54,8 @@ export async function PATCH(
     const { id } = await params;
     const body = await request.json();
 
-    const existing = await prisma.stockCount.findUnique({
-      where: { id },
+    const existing = await prisma.stockCount.findFirst({
+      where: { id, ...farmScopeWhere(user) },
       include: { items: true },
     });
 

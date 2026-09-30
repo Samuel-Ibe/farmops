@@ -173,7 +173,8 @@ export const createUserSchema = z.object({
     .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
     .regex(/[a-z]/, "Password must contain at least one lowercase letter")
     .regex(/[0-9]/, "Password must contain at least one number"),
-  role: z.enum(["ADMIN", "FARM_MANAGER", "WAREHOUSE_MANAGER", "FIELD_WORKER", "ACCOUNTANT"]).default("FIELD_WORKER"),
+  // NOTE: role is intentionally NOT client-settable. Self-registered accounts
+  // always start as FIELD_WORKER; promotion requires an existing admin.
 });
 
 export const updateUserSchema = z.object({
