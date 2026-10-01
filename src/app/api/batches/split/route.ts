@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp, resolveFarmScope } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, resolveFarmScope, withIdempotency } from "@/lib/api-auth";
+import { applyStockDelta } from "@/lib/stock";
+import { logRouteError } from "@/lib/logger";
 
 /**
  * POST /api/batches/split
@@ -31,6 +33,7 @@ export async function POST(request: Request) {
       );
     }
 
+    return await withIdempotency(request, `POST /api/batches/split:${user.id}`, async () => {
     const sourceBatch = await prisma.inventoryBatch.findUnique({
       where: { id: batchId },
       include: { item: true, warehouse: true },
@@ -79,17 +82,18 @@ export async function POST(request: Request) {
 
     // Use a transaction to ensure atomicity
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Reduce source batch quantity
-      const updatedSource = await tx.inventoryBatch.update({
+      // 1. Reduce source batch quantity — conditional UPDATE re-checks the
+      //    remaining quantity under the row lock (concurrent spend → 409,
+      //    never a negative or double-spent batch).
+      const adjustment = await applyStockDelta(tx, batchId, -splitQuantity);
+      if (!adjustment.ok) return { error: adjustment } as const;
+
+      const updatedSource = await tx.inventoryBatch.findUnique({
         where: { id: batchId },
-        data: {
-          quantityRemaining: sourceBatch.quantityRemaining - splitQuantity,
-          status:
-            sourceBatch.quantityRemaining - splitQuantity <= 0
-              ? "DEPLETED"
-              : sourceBatch.status,
-        },
       });
+      if (!updatedSource) {
+        return { error: { reason: "BATCH_NOT_FOUND", available: 0 } } as const;
+      }
 
       // 2. Create new batch with split quantity
       const newBatch = await tx.inventoryBatch.create({
@@ -155,6 +159,16 @@ export async function POST(request: Request) {
       return { updatedSource, newBatch };
     });
 
+    if (result.error) {
+      if (result.error.reason === "BATCH_NOT_FOUND") {
+        return NextResponse.json({ error: "Batch not found" }, { status: 404 });
+      }
+      return NextResponse.json(
+        { error: "Insufficient stock", available: result.error.available ?? 0 },
+        { status: 409 }
+      );
+    }
+
     // Audit log
     await writeAuditLog({
       userId: user.id,
@@ -180,8 +194,9 @@ export async function POST(request: Request) {
       },
       { status: 201 }
     );
+    });
   } catch (error) {
-    console.error("Error splitting batch:", error);
+    logRouteError(request, "Error splitting batch", error);
     return NextResponse.json(
       { error: "Failed to split batch" },
       { status: 500 }

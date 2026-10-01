@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/shared/page-header";
@@ -61,109 +60,17 @@ interface DashboardData {
 }
 
 export default function DashboardPage() {
-  const { data: session } = useSession();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-
-  const userRole = (session?.user as any)?.role;
-  const userFarmId = (session?.user as any)?.farmId;
-  const isAdmin = userRole === "ADMIN";
-  // Admin sees all data; non-admin users only see their farm's data
-  const farmFilter = isAdmin || !userFarmId ? "" : `&farmId=${userFarmId}`;
 
   const fetchDashboard = async () => {
     setLoading(true);
     try {
-      // Fetch all data in parallel, scoped by user's farm
-      const [itemsRes, requestsRes, txnsRes, farmsRes, warehousesRes, poRes, wasteRes] = await Promise.all([
-        fetch(`/api/inventory?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
-        fetch(`/api/requests?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
-        fetch(`/api/transactions?limit=100${farmFilter}`).then((r) => r.json()).catch(() => []),
-        fetch(`/api/farms?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
-        fetch(`/api/warehouses?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
-        fetch(`/api/purchase-orders?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
-        fetch(`/api/waste?farmId=${userFarmId || ""}`).then((r) => r.json()).catch(() => []),
-      ]);
-
-      const extract = (res: any) => Array.isArray(res) ? res : (res?.data || []);
-      const items = extract(itemsRes);
-      const requests = extract(requestsRes);
-      const txns = extract(txnsRes);
-      const farms = extract(farmsRes);
-      const warehouses = extract(warehousesRes);
-      const pos = extract(poRes);
-      const waste = extract(wasteRes);
-
-      const totalValue = items.reduce((sum: number, item: any) => sum + (item.totalValue || 0), 0);
-      const lowStock = items.filter((item: any) =>
-        (item.totalQuantity || 0) <= (item.minimumStockLevel || 0) && item.minimumStockLevel > 0
-      ).length;
-      const pendingReqs = requests.filter((r: any) => r.status === "PENDING").length;
-
-      // Category breakdown
-      const catMap = new Map<string, { value: number; color: string }>();
-      items.forEach((item: any) => {
-        const cat = item.category?.name || "Other";
-        const existing = catMap.get(cat) || { value: 0, color: item.category?.color || "#6b7280" };
-        catMap.set(cat, { value: existing.value + (item.totalValue || 0), color: existing.color });
-      });
-
-      // Transaction trends (last 6 months)
-      const monthlyData: Record<string, { received: number; issued: number; wasted: number }> = {};
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date();
-        d.setMonth(d.getMonth() - i);
-        const key = d.toLocaleString("default", { month: "short" });
-        monthlyData[key] = { received: 0, issued: 0, wasted: 0 };
-      }
-      txns.forEach((tx: any) => {
-        const month = new Date(tx.createdAt).toLocaleString("default", { month: "short" });
-        if (monthlyData[month]) {
-          if (tx.type === "RECEIVED" || tx.type === "RETURNED") monthlyData[month].received += tx.quantity || 0;
-          else if (tx.type === "ISSUED" || tx.type === "TRANSFERRED") monthlyData[month].issued += tx.quantity || 0;
-          else if (tx.type === "WASTED") monthlyData[month].wasted += tx.quantity || 0;
-        }
-      });
-
-      // Waste breakdown
-      const wasteMap = new Map<string, number>();
-      waste.forEach((w: any) => {
-        const type = w.wasteType || "Other";
-        wasteMap.set(type, (wasteMap.get(type) || 0) + (w.quantity || 0));
-      });
-
-      // Supplier stats
-      const supplierMap = new Map<string, { orders: number; value: number }>();
-      pos.forEach((po: any) => {
-        const name = po.supplier?.name || "Unknown";
-        const existing = supplierMap.get(name) || { orders: 0, value: 0 };
-        supplierMap.set(name, {
-          orders: existing.orders + 1,
-          value: existing.value + Number(po.totalAmount || 0),
-        });
-      });
-
-      setData({
-        totalItems: items.length,
-        inventoryValue: totalValue,
-        lowStockItems: lowStock,
-        expiringSoon: 0,
-        pendingRequests: pendingReqs,
-        activeFarms: farms.length,
-        totalWarehouses: warehouses.length,
-        totalTransactions: txns.length,
-        recentTransactions: txns.slice(0, 5),
-        lowStockAlerts: items
-          .filter((item: any) => (item.totalQuantity || 0) <= (item.minimumStockLevel || 0) && item.minimumStockLevel > 0)
-          .slice(0, 5),
-        inventoryValueByCategory: Array.from(catMap.entries()).map(([name, { value, color }]) => ({ name, value, color })),
-        transactionTrends: Object.entries(monthlyData).map(([name, data]) => ({ name, ...data })),
-        wasteBreakdown: Array.from(wasteMap.entries()).map(([name, value]) => ({ name, value })),
-        topSuppliers: Array.from(supplierMap.entries())
-          .map(([name, data]) => ({ name, ...data }))
-          .sort((a, b) => b.value - a.value)
-          .slice(0, 5),
-      });
+      // One server-side aggregated request; farm scope comes from the
+      // session inside the route — never from query parameters.
+      const res = await fetch("/api/dashboard/overview");
+      if (!res.ok) throw new Error(`Dashboard request failed: ${res.status}`);
+      setData(await res.json());
     } catch (err) {
       console.error("Failed to load dashboard:", err);
     } finally {

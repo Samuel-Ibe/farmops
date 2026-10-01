@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope } from "@/lib/api-auth";
+import { applyStockDelta } from "@/lib/stock";
+import { logRouteError } from "@/lib/logger";
 
 // Stock counts are scoped to the warehouse's farm
 function farmScopeWhere(user: { role: string; farmId?: string | null }) {
@@ -38,7 +40,7 @@ export async function GET(
 
     return NextResponse.json(stockCount);
   } catch (error) {
-    console.error("Error fetching stock count:", error);
+    logRouteError(request, "Error fetching stock count", error);
     return NextResponse.json({ error: "Failed to fetch stock count" }, { status: 500 });
   }
 }
@@ -86,16 +88,25 @@ export async function PATCH(
       allowedUpdates.notes = body.notes;
     }
 
+    if (Object.keys(allowedUpdates).length === 0 && !body.items) {
+      return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
+    }
+
+    // Reconciliation (variance application), item bookkeeping and the count
+    // status transition commit atomically — a lost race on any batch's
+    // quantity aborts the whole reconciliation with 409 instead of clamping
+    // to zero and recording a transaction for stock that was never moved.
+    const outcome = await prisma.$transaction(async (tx) => {
     // Update item quantities if provided
     if (body.items && Array.isArray(body.items)) {
       for (const itemUpdate of body.items) {
         if (itemUpdate.id && itemUpdate.countedQuantity !== undefined) {
-          const countItem = await prisma.stockCountItem.findUnique({
+          const countItem = await tx.stockCountItem.findUnique({
             where: { id: itemUpdate.id },
           });
           if (countItem && countItem.stockCountId === id) {
             const variance = itemUpdate.countedQuantity - Number(countItem.systemQuantity);
-            await prisma.stockCountItem.update({
+            await tx.stockCountItem.update({
               where: { id: itemUpdate.id },
               data: {
                 countedQuantity: itemUpdate.countedQuantity,
@@ -106,21 +117,15 @@ export async function PATCH(
 
             // If reconciling, apply variance to the actual batch
             if (body.status === "RECONCILED" && variance !== 0) {
-              const batch = await prisma.inventoryBatch.findUnique({
+              const batch = await tx.inventoryBatch.findUnique({
                 where: { id: countItem.batchId },
               });
               if (batch) {
-                const newQuantity = Number(batch.quantityRemaining) + variance;
-                await prisma.inventoryBatch.update({
-                  where: { id: batch.id },
-                  data: {
-                    quantityRemaining: Math.max(0, newQuantity),
-                    status: newQuantity <= 0 ? "DEPLETED" : batch.status,
-                  },
-                });
+                const adjustment = await applyStockDelta(tx, batch.id, variance);
+                if (!adjustment.ok) return { error: adjustment } as const;
 
                 // Record the adjustment as a transaction
-                await prisma.stockTransaction.create({
+                await tx.stockTransaction.create({
                   data: {
                     type: variance > 0 ? "RECEIVED" : "ADJUSTED",
                     batchId: batch.id,
@@ -138,11 +143,7 @@ export async function PATCH(
       }
     }
 
-    if (Object.keys(allowedUpdates).length === 0 && !body.items) {
-      return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
-    }
-
-    const updated = await prisma.stockCount.update({
+    const updated = await tx.stockCount.update({
       where: { id },
       data: allowedUpdates,
       include: {
@@ -155,6 +156,20 @@ export async function PATCH(
         },
       },
     });
+    return { updated } as const;
+    });
+
+    if (outcome.error) {
+      if (outcome.error.reason === "BATCH_NOT_FOUND") {
+        return NextResponse.json({ error: "Batch no longer exists" }, { status: 409 });
+      }
+      return NextResponse.json(
+        { error: "Insufficient stock to reconcile this variance", available: outcome.error.available ?? 0 },
+        { status: 409 }
+      );
+    }
+
+    const updated = outcome.updated;
 
     await writeAuditLog({
       userId: user.id,
@@ -168,7 +183,7 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error) {
-    console.error("Error updating stock count:", error);
+    logRouteError(request, "Error updating stock count", error);
     return NextResponse.json({ error: "Failed to update stock count" }, { status: 500 });
   }
 }
@@ -210,7 +225,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: "Stock count deleted" });
   } catch (error) {
-    console.error("Error deleting stock count:", error);
+    logRouteError(request, "Error deleting stock count", error);
     return NextResponse.json({ error: "Failed to delete stock count" }, { status: 500 });
   }
 }

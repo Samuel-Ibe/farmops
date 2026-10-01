@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAuditLog, getClientIp, mutationGuard } from "@/lib/api-auth";
+import { applyStockDelta, transactionTypeDelta } from "@/lib/stock";
+import { logRouteError } from "@/lib/logger";
 
 export async function GET(
   request: Request,
@@ -34,7 +36,7 @@ export async function GET(
 
     return NextResponse.json(transaction);
   } catch (error) {
-    console.error("Error fetching transaction:", error);
+    logRouteError(request, "Error fetching transaction", error);
     return NextResponse.json({ error: "Failed to fetch transaction" }, { status: 500 });
   }
 }
@@ -94,7 +96,7 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error) {
-    console.error("Error updating transaction:", error);
+    logRouteError(request, "Error updating transaction", error);
     return NextResponse.json({ error: "Failed to update transaction" }, { status: 500 });
   }
 }
@@ -114,26 +116,30 @@ export async function DELETE(
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     }
 
-    // Restore batch quantity before deleting
-    const batch = await prisma.inventoryBatch.findUnique({ where: { id: existing.batchId } });
-    if (batch) {
-      let newQty = batch.quantityRemaining;
-      if (existing.type === "RECEIVED" || existing.type === "RETURNED") {
-        newQty -= existing.quantity;
-      } else {
-        newQty += existing.quantity;
+    // Reverse the quantity effect and delete the record atomically. The
+    // conditional UPDATE means reverting an inbound receipt can never drive
+    // stock negative (concurrent consumption) — it returns a 409 instead.
+    const reverseDelta = -transactionTypeDelta(existing.type, existing.quantity);
+    const outcome = await prisma.$transaction(async (tx) => {
+      const adjustment = await applyStockDelta(tx, existing.batchId, reverseDelta);
+      if (!adjustment.ok) return { error: adjustment } as const;
+      await tx.stockTransaction.delete({ where: { id } });
+      return { ok: true } as const;
+    });
+
+    if (outcome.error) {
+      if (outcome.error.reason === "INSUFFICIENT_STOCK") {
+        return NextResponse.json(
+          {
+            error: "Cannot delete: the stock recorded by this transaction has already been consumed",
+            available: outcome.error.available ?? 0,
+          },
+          { status: 409 }
+        );
       }
-
-      await prisma.inventoryBatch.update({
-        where: { id: existing.batchId },
-        data: {
-          quantityRemaining: Math.max(0, newQty),
-          status: batch.status === "DEPLETED" && newQty > 0 ? "ACTIVE" : batch.status,
-        },
-      });
+      // Batch no longer exists — remove the orphaned transaction record.
+      await prisma.stockTransaction.delete({ where: { id } });
     }
-
-    await prisma.stockTransaction.delete({ where: { id } });
 
     await writeAuditLog({
       userId: user.id,
@@ -146,7 +152,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: "Transaction deleted" });
   } catch (error) {
-    console.error("Error deleting transaction:", error);
+    logRouteError(request, "Error deleting transaction", error);
     return NextResponse.json({ error: "Failed to delete transaction" }, { status: 500 });
   }
 }

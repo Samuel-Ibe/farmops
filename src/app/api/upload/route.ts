@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuth, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { matchesDeclaredType } from "@/lib/file-signatures";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import crypto from "crypto";
@@ -43,6 +44,16 @@ export async function POST(request: Request) {
       );
     }
 
+    // Verify the file's actual content matches its declared type (magic
+    // bytes) — a renamed script with a spoofed MIME type is rejected here.
+    const bytes = Buffer.from(await file.arrayBuffer());
+    if (!matchesDeclaredType(bytes, file.type)) {
+      return NextResponse.json(
+        { error: "File content does not match its declared type" },
+        { status: 400 }
+      );
+    }
+
     // Ensure upload directory exists
     await mkdir(UPLOAD_DIR, { recursive: true });
 
@@ -54,9 +65,7 @@ export async function POST(request: Request) {
     const filename = `${safeEntity}-${safeEntityId}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
     const filepath = join(UPLOAD_DIR, filename);
 
-    // Convert file to buffer and write
-    const bytes = await file.arrayBuffer();
-    await writeFile(filepath, Buffer.from(bytes));
+    await writeFile(filepath, bytes);
 
     const url = `/uploads/${filename}`;
 

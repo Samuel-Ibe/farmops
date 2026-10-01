@@ -1,5 +1,25 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
+import {
+  NO_FARM_MATCH,
+  hasMinRole,
+  hasRole,
+  resolveFarmScope,
+} from "@/lib/tenant";
+import {
+  beginIdempotency,
+  completeIdempotency,
+  isValidIdempotencyKey,
+  releaseIdempotency,
+} from "@/lib/idempotency";
+
+// Pure authorization rules live in @/lib/tenant so tests and non-HTTP code
+// share exactly one implementation. Re-exported here for route ergonomics.
+export { NO_FARM_MATCH, hasMinRole, hasRole, resolveFarmScope };
+// Rate limiting lives in @/lib/rate-limit (also imported by the NextAuth
+// authorize callback — importing this module there would cycle).
+export { checkRateLimit };
 
 export interface AuthUser {
   id: string;
@@ -38,28 +58,7 @@ export async function requireAuth(): Promise<AuthUser | NextResponse> {
   return user;
 }
 
-// ─── Multi-Tenant (Farm) Scoping ─────────────────────
-
-// The client may *request* a farm filter, but the effective scope always
-// comes from the session — never from a query parameter. Admins may scope to
-// any farm (or none); everyone else is pinned to their own farm.
-// NO_FARM_MATCH can never equal a real (cuid) id, so a user with no farm
-// assigned matches nothing instead of everything.
-export const NO_FARM_MATCH = "__no_farm__";
-
-export function resolveFarmScope(
-  user: AuthUser,
-  requested?: string | null
-): string | null {
-  if (user.role === "ADMIN") return requested || null;
-  return user.farmId || NO_FARM_MATCH;
-}
-
 // ─── Role-Based Access Control ──────────────────────────────
-
-export function hasRole(user: AuthUser, roles: string[]): boolean {
-  return roles.includes(user.role);
-}
 
 export async function requireRole(
   roles: string[]
@@ -73,21 +72,6 @@ export async function requireRole(
     );
   }
   return result;
-}
-
-// Role hierarchy: ADMIN > FARM_MANAGER > WAREHOUSE_MANAGER > ACCOUNTANT > FIELD_WORKER
-const ROLE_HIERARCHY: Record<string, number> = {
-  ADMIN: 100,
-  FARM_MANAGER: 80,
-  WAREHOUSE_MANAGER: 60,
-  ACCOUNTANT: 40,
-  FIELD_WORKER: 20,
-};
-
-export function hasMinRole(user: AuthUser, minRole: string): boolean {
-  const userLevel = ROLE_HIERARCHY[user.role] || 0;
-  const requiredLevel = ROLE_HIERARCHY[minRole] || 0;
-  return userLevel >= requiredLevel;
 }
 
 export async function requireMinRole(
@@ -104,30 +88,7 @@ export async function requireMinRole(
   return result;
 }
 
-// ─── Rate Limiting (in-memory, per-IP) ──────────────────────
-
-const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
-
-export function checkRateLimit(
-  key: string,
-  maxRequests: number = 60,
-  windowMs: number = 60000
-): { allowed: boolean; remaining: number; resetAt: number } {
-  const now = Date.now();
-  const record = rateLimitStore.get(key);
-
-  if (!record || now > record.resetAt) {
-    rateLimitStore.set(key, { count: 1, resetAt: now + windowMs });
-    return { allowed: true, remaining: maxRequests - 1, resetAt: now + windowMs };
-  }
-
-  if (record.count >= maxRequests) {
-    return { allowed: false, remaining: 0, resetAt: record.resetAt };
-  }
-
-  record.count++;
-  return { allowed: true, remaining: maxRequests - record.count, resetAt: record.resetAt };
-}
+// ─── Request Metadata ───────────────────────────────────────
 
 export function getClientIp(request: Request): string {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -176,6 +137,72 @@ export function csrfErrorResponse(): NextResponse {
     { error: "CSRF validation failed" },
     { status: 403 }
   );
+}
+
+// ─── Idempotency ────────────────────────────────────────────
+
+/**
+ * Run a mutation at most once per `Idempotency-Key` header value.
+ *
+ * - No header → handler runs normally (idempotency is opt-in).
+ * - Duplicate key → the stored successful response is replayed with
+ *   `Idempotent-Replay: true`.
+ * - Concurrent duplicate → 409 while the original request is in flight.
+ * - Non-2xx / thrown → the key is released so a corrected retry can run.
+ *
+ * `scope` should identify the route and the acting user, so two users (or two
+ * endpoints) can never share a key's recorded response.
+ */
+export async function withIdempotency(
+  request: Request,
+  scope: string,
+  handler: () => Promise<NextResponse>
+): Promise<NextResponse> {
+  const rawKey = request.headers.get("idempotency-key");
+  if (!rawKey) return handler();
+
+  const key = rawKey.trim();
+  if (!isValidIdempotencyKey(key)) {
+    return NextResponse.json(
+      { error: "Invalid Idempotency-Key header" },
+      { status: 400 }
+    );
+  }
+
+  const scopeKey = `${scope}:${key}`;
+  const check = beginIdempotency(scopeKey);
+
+  if (check.outcome === "inflight") {
+    return NextResponse.json(
+      { error: "A request with this Idempotency-Key is already in progress" },
+      { status: 409 }
+    );
+  }
+  if (check.outcome === "replay") {
+    return NextResponse.json(check.record.body as Record<string, unknown>, {
+      status: check.record.status,
+      headers: { "Idempotent-Replay": "true" },
+    });
+  }
+
+  try {
+    const response = await handler();
+    if (response.ok) {
+      let body: unknown = null;
+      try {
+        body = await response.clone().json();
+      } catch {
+        body = null;
+      }
+      completeIdempotency(scopeKey, response.status, body);
+    } else {
+      releaseIdempotency(scopeKey);
+    }
+    return response;
+  } catch (err) {
+    releaseIdempotency(scopeKey);
+    throw err;
+  }
 }
 
 // ─── Audit Logging ──────────────────────────────────────────

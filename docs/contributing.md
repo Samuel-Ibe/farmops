@@ -26,7 +26,7 @@ Verify your setup before first commit:
 
 ```bash
 npx tsc --noEmit   # typecheck
-npm test           # 76 unit tests
+npm test           # 138 unit tests
 ```
 
 ## Branch & commit style

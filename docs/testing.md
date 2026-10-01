@@ -21,7 +21,7 @@ CI runs `tsc --noEmit` → `npm test` → `npm audit --audit-level=critical`.
 
 | Metric | Value | How it's measured |
 |---|---|---|
-| Unit tests | **76 passing** across 5 files | `npm test` |
+| Unit tests | **138 passing** across 12 files | `npm test` |
 | Type coverage | **91.3%** (32,519 / 35,628) | `npx type-coverage` |
 | TypeScript | `strict: true`, 0 errors | `npx tsc --noEmit` |
 | Branch coverage (tested lib modules) | **91.2%** | `npm run test:coverage` |

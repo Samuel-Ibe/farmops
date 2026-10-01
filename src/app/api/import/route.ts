@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import Papa from "papaparse";
-import { mutationGuard } from "@/lib/api-auth";
+import { mutationGuard, resolveFarmScope } from "@/lib/api-auth";
+import { applyStockDelta, transactionTypeDelta } from "@/lib/stock";
+import { logRouteError } from "@/lib/logger";
 
 export async function POST(request: Request) {
   try {
@@ -132,8 +134,11 @@ export async function POST(request: Request) {
 
     if (type === "transactions") {
       const results = { created: 0, skipped: 0, errors: [] as string[] };
-      // Get the first user to attribute transactions to
-      const defaultUser = await prisma.user.findFirst({ where: { isActive: true } });
+      // Transactions are attributed to the authenticated importer (never an
+      // arbitrary row from the users table) and stamped with their farm.
+      const importer = guard;
+      const farmScope = resolveFarmScope(importer);
+      const scopeFilter = farmScope ? { farmId: farmScope } : {};
 
       for (const row of rows) {
         try {
@@ -148,9 +153,11 @@ export async function POST(request: Request) {
             continue;
           }
 
-          // Find batch
+          // Find batch — scoped to the importer's farm so a CSV can never
+          // reference another tenant's stock by batch number
           const batch = await prisma.inventoryBatch.findFirst({
-            where: { batchNumber },
+            where: { batchNumber, ...scopeFilter, ...(farmScope ? { warehouse: { farmId: farmScope } } : {}) },
+            include: { warehouse: true },
           });
           if (!batch) {
             results.skipped++;
@@ -158,7 +165,7 @@ export async function POST(request: Request) {
             continue;
           }
 
-          // Find or default warehouses
+          // Find or default warehouses — each independently farm-scoped
           let fromWarehouseId: string | undefined;
           let toWarehouseId: string | undefined;
 
@@ -166,47 +173,58 @@ export async function POST(request: Request) {
           const toWhName = row["To Warehouse"]?.trim();
 
           if (fromWhName) {
-            const wh = await prisma.warehouse.findFirst({ where: { name: fromWhName } });
+            const wh = await prisma.warehouse.findFirst({
+              where: { name: fromWhName, ...scopeFilter },
+            });
             if (wh) fromWarehouseId = wh.id;
           }
           if (toWhName) {
-            const wh = await prisma.warehouse.findFirst({ where: { name: toWhName } });
+            const wh = await prisma.warehouse.findFirst({
+              where: { name: toWhName, ...scopeFilter },
+            });
             if (wh) toWarehouseId = wh.id;
           }
 
           const unitCost = Number(batch.purchasePrice);
           const totalValue = unitCost * quantity;
 
-          await prisma.stockTransaction.create({
-            data: {
-              type: typeVal as any,
-              batchId: batch.id,
-              fromWarehouseId: fromWarehouseId || batch.warehouseId,
-              toWarehouseId: toWarehouseId,
-              quantity,
-              unitCost,
-              totalValue,
-              reason: row["Reason"]?.trim() || undefined,
-              referenceNumber: row["Reference"]?.trim() || undefined,
-              performedById: defaultUser?.id || "",
-            },
+          // Quantity change and transaction record commit atomically; a lost
+          // race or insufficient stock skips the row instead of clamping.
+          const outcome = await prisma.$transaction(async (tx) => {
+            const adjustment = await applyStockDelta(
+              tx,
+              batch.id,
+              transactionTypeDelta(typeVal, quantity)
+            );
+            if (!adjustment.ok) return { error: adjustment } as const;
+
+            await tx.stockTransaction.create({
+              data: {
+                type: typeVal as any,
+                batchId: batch.id,
+                fromWarehouseId: fromWarehouseId || batch.warehouseId,
+                toWarehouseId: toWarehouseId,
+                quantity,
+                unitCost,
+                totalValue,
+                reason: row["Reason"]?.trim() || undefined,
+                referenceNumber: row["Reference"]?.trim() || undefined,
+                performedById: importer.id,
+                farmId: batch.warehouse?.farmId || importer.farmId || undefined,
+              },
+            });
+            return { ok: true } as const;
           });
 
-          // Update batch quantity
-          let newQty = batch.quantityRemaining;
-          if (typeVal === "RECEIVED" || typeVal === "RETURNED") {
-            newQty += quantity;
-          } else {
-            newQty -= quantity;
+          if (outcome.error) {
+            results.skipped++;
+            results.errors.push(
+              outcome.error.reason === "INSUFFICIENT_STOCK"
+                ? `Row skipped: insufficient stock in batch ${batchNumber}`
+                : `Row skipped: batch ${batchNumber} unavailable`
+            );
+            continue;
           }
-
-          await prisma.inventoryBatch.update({
-            where: { id: batch.id },
-            data: {
-              quantityRemaining: Math.max(0, newQty),
-              status: newQty <= 0 ? "DEPLETED" : batch.status,
-            },
-          });
 
           results.created++;
         } catch (err: any) {
@@ -223,7 +241,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Invalid import type. Use 'inventory' or 'transactions'." }, { status: 400 });
   } catch (error) {
-    console.error("Import error:", error);
+    logRouteError(request, "Import error", error);
     return NextResponse.json({ error: "Import failed" }, { status: 500 });
   }
 }

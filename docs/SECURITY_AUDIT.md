@@ -484,4 +484,4 @@ Verified: non-admins cannot read `GET /api/users`, cannot set `role` via `PATCH/
 
 ---
 
-*All fixes referenced above are applied in the working tree, verified with `tsc --noEmit` (clean) and `vitest run` (76/76 passing).*
+*All fixes referenced above are applied in the working tree, verified with `tsc --noEmit` (clean) and `vitest run` (76/76 passing at audit time; 138/138 after the production-elevation hardening — see [PRODUCTION_ELEVATION.md](PRODUCTION_ELEVATION.md)).*

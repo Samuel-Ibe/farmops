@@ -88,7 +88,9 @@ export function paginatedResponse<T>(
 
   return NextResponse.json(response, {
     headers: {
-      "Cache-Control": `public, s-maxage=${cacheMaxAge}, stale-while-revalidate=${cacheMaxAge * 2}`,
+      // `private` — responses are tenant-scoped; shared caches must never
+      // store one farm's data and serve it to another.
+      "Cache-Control": `private, max-age=${cacheMaxAge}, stale-while-revalidate=${cacheMaxAge * 2}`,
       "X-Total-Count": String(total),
       "X-Page": String(params.page),
       "X-Per-Page": String(params.limit),
@@ -116,7 +118,7 @@ export function cursorPaginatedResponse<T>(
 
   return NextResponse.json(response, {
     headers: {
-      "Cache-Control": `public, s-maxage=${cacheMaxAge}, stale-while-revalidate=${cacheMaxAge * 2}`,
+      "Cache-Control": `private, max-age=${cacheMaxAge}, stale-while-revalidate=${cacheMaxAge * 2}`,
     },
   });
 }
@@ -127,7 +129,7 @@ export function cursorPaginatedResponse<T>(
 export function cachedJsonResponse<T>(data: T, maxAge: number = 30): NextResponse<T> {
   return NextResponse.json(data, {
     headers: {
-      "Cache-Control": `public, s-maxage=${maxAge}, stale-while-revalidate=${maxAge * 2}`,
+      "Cache-Control": `private, max-age=${maxAge}, stale-while-revalidate=${maxAge * 2}`,
     },
   });
 }

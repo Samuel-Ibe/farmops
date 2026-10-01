@@ -10,11 +10,11 @@ export async function GET() {
   const user = await requireRole(["ADMIN"]);
   if (user instanceof NextResponse) return user;
   const keys = listApiKeys();
-  // Mask keys for display
+  // Keys are stored hashed — `k.key` is already a non-reversible display hint
   const masked = keys.map((k) => ({
     id: k.id,
     name: k.name,
-    keyPreview: k.key.slice(0, 12) + "..." + k.key.slice(-4),
+    keyPreview: k.key,
     permissions: k.permissions,
     farmId: k.farmId ?? null,
     isActive: k.isActive,

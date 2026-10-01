@@ -1,19 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { validateApiKey } from "@/lib/api-keys";
-
-async function authenticate(request: Request) {
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return { error: NextResponse.json({ error: "Missing or invalid Authorization header. Use: Bearer <api_key>" }, { status: 401 }) };
-  }
-  const token = authHeader.slice(7);
-  const apiKey = validateApiKey(token);
-  if (!apiKey) {
-    return { error: NextResponse.json({ error: "Invalid or revoked API key" }, { status: 401 }) };
-  }
-  return { apiKey };
-}
+import { authenticateExternal } from "@/lib/external-auth";
 
 /**
  * GET /api/external/inventory
@@ -24,8 +11,8 @@ async function authenticate(request: Request) {
  */
 export async function GET(request: Request) {
   try {
-    const auth = await authenticate(request);
-    if (auth.error) return auth.error;
+    const auth = await authenticateExternal(request, "read:inventory");
+    if (auth instanceof NextResponse) return auth;
 
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search") || "";
@@ -38,7 +25,7 @@ export async function GET(request: Request) {
     if (search) where.name = { contains: search, mode: "insensitive" };
     if (categoryId) where.categoryId = categoryId;
     // Tenant isolation: a farm-pinned key only ever reads its own farm's stock
-    const keyFarmId = auth.apiKey.farmId;
+    const keyFarmId = auth.farmId;
     if (keyFarmId) where.batches = { some: { warehouse: { farmId: keyFarmId } } };
 
     const [items, total] = await Promise.all([

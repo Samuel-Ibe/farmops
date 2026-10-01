@@ -10,22 +10,28 @@ Built for farms running 20–500 hectares across several plots in Ghana (GH₵, 
 
 ## Engineering metrics
 
-Measured on `main`, not estimated:
+Measured on `master`, not estimated:
 
 | Metric | Value | Tool |
 |---|---|---|
-| Type coverage | **91.3%** (32,519 / 35,628) | `type-coverage` |
+| Type coverage | **92.5%** (37,041 / 40,034) | `type-coverage` |
 | TypeScript | `strict: true`, **0 errors** | `tsc --noEmit` |
-| Unit tests | **76 passing** (5 suites) | Vitest |
+| Unit tests | **138 passing** (12 suites — incl. 62 adversarial security/atomicity tests) | Vitest |
 | Branch coverage, tested lib modules | **91.2%** | `vitest --coverage` |
 | Critical vulnerabilities, production deps | **0** | `npm audit --omit=dev` |
 | High vulnerabilities, production deps | **0** (2 moderate accepted — see [security.md](docs/security.md)) | `npm audit --omit=dev` |
 | Authenticated API routes | **45/49 guarded** — 4 are intentionally public auth endpoints | route sweep |
 | Tenant isolation | **100% of data routes** scoped server-side from the session | `resolveFarmScope` |
 | Ownership checks | **100% of per-ID mutations** (scoped lookup → 404, never 403) | audit |
+| Stock mutations | **atomic** — conditional updates inside DB transactions; lost race → 409 | `src/lib/stock.ts` + race tests |
+| Idempotency | `Idempotency-Key` on transactions, transfer, split, approvals, PO submission | `src/lib/idempotency.ts` |
+| API keys | stored **SHA-256 hashed**, scope-enforced per route | `src/lib/api-keys.ts` |
+| Login throttling | 5 failed attempts / IP+account / 15 min, no lockout DoS | `src/lib/rate-limit.ts` |
+| Security headers | CSP + HSTS + frame/nosniff policy on every response | `src/middleware.ts` |
+| Health endpoint | `GET /api/health` (DB probe, 200/503) | deployment checks |
 | Raw SQL / `dangerouslySetInnerHTML` | **0 / 0** | grep |
 
-Honest gaps (they're tracked, not hidden): statement coverage across `src/lib` is 16% — tests cover the tested modules well but whole modules are untested; route handlers have no unit coverage. See [docs/testing.md](docs/testing.md) §2.
+Honest gaps (they're tracked, not hidden): statement coverage across `src/lib` is 16% — tests cover the tested modules well but whole modules are untested; route handlers have no unit coverage (the Farm A/B HTTP matrix is the next E2E target). See [docs/testing.md](docs/testing.md) §2. The full hardening status — including deferred items like distributed rate limiting and the DTO/`any` sweep — is mapped recommendation-by-recommendation in [docs/PRODUCTION_ELEVATION.md](docs/PRODUCTION_ELEVATION.md).
 
 ---
 
@@ -92,7 +98,7 @@ docker compose up -d   # PostgreSQL + app + MailHog (email UI: :8025)
 | Layer | Choice | Why |
 |---|---|---|
 | Framework | Next.js 16 (App Router) | one codebase for SSR + API |
-| Language | TypeScript 5.7, `strict` | 91.3% type coverage |
+| Language | TypeScript 5.7, `strict` | 92.5% type coverage |
 | Database | PostgreSQL 16 | one DB, `farmId` discriminators ([ADR-002](docs/adr/ADR-002-multi-tenant-design.md)) |
 | ORM | Prisma 6 | typed schema→code, zero raw SQL ([ADR-003](docs/adr/ADR-003-prisma-selection.md)) |
 | Auth | NextAuth v5, JWT sessions | one module owns claims ([ADR-001](docs/adr/ADR-001-auth-strategy.md)) |

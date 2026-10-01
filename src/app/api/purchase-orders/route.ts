@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, requireAuth, resolveFarmScope, withIdempotency } from "@/lib/api-auth";
+import { logRouteError } from "@/lib/logger";
 import { validate, createPurchaseOrderSchema } from "@/lib/api-validations";
 import { parsePaginationParams, cachedJsonResponse } from "@/lib/pagination";
 
@@ -33,7 +34,7 @@ export async function GET(request: Request) {
 
     return cachedJsonResponse(orders, 30);
   } catch (error) {
-    console.error("Error fetching purchase orders:", error);
+    logRouteError(request, "Error fetching purchase orders", error);
     return NextResponse.json({ error: "Failed to fetch purchase orders" }, { status: 500 });
   }
 }
@@ -57,6 +58,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No farm assigned to your account" }, { status: 400 });
     }
 
+    return await withIdempotency(request, `POST /api/purchase-orders:${user.id}`, async () => {
     const count = await prisma.purchaseOrder.count();
     const now = new Date();
     const orderNumber = `PO-${now.getFullYear().toString().slice(-2)}${(now.getMonth() + 1).toString().padStart(2, "0")}-${(count + 1).toString().padStart(4, "0")}`;
@@ -75,8 +77,9 @@ export async function POST(request: Request) {
     await writeAuditLog({ userId: user.id, action: "CREATE", entity: "PurchaseOrder", entityId: order.id, newValues: { orderNumber, totalAmount }, ipAddress: getClientIp(request) });
 
     return NextResponse.json(order, { status: 201 });
+    });
   } catch (error) {
-    console.error("Error creating purchase order:", error);
+    logRouteError(request, "Error creating purchase order", error);
     return NextResponse.json({ error: "Failed to create purchase order" }, { status: 500 });
   }
 }

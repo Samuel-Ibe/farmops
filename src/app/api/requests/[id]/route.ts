@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, withIdempotency } from "@/lib/api-auth";
 import { validate, updateRequestSchema } from "@/lib/api-validations";
+import { applyStockDelta } from "@/lib/stock";
+import { logRouteError } from "@/lib/logger";
 
 export async function PATCH(
   request: Request,
@@ -33,6 +35,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Request belongs to another farm" }, { status: 403 });
     }
 
+    return await withIdempotency(request, `PATCH /api/requests:${user.id}`, async () => {
     const updateData: any = {
       status,
       reviewedById: user.id,
@@ -48,57 +51,68 @@ export async function PATCH(
       updateData.approvedQuantity = approvedQuantity || existing.quantity;
     }
 
-    // If approved and has a warehouse, create a stock issue transaction
-    if (status === "APPROVED" && existing.warehouseId) {
-      const batch = await prisma.inventoryBatch.findFirst({
-        where: {
-          itemId: existing.itemId,
-          warehouseId: existing.warehouseId,
-          status: "ACTIVE",
-          quantityRemaining: { gte: approvedQuantity || existing.quantity },
+    // Approval and stock issuance are one atomic operation: the issuance
+    // uses a conditional UPDATE, so approving the same batch twice (or a
+    // concurrent spend) can never over-issue — it returns 409 and the
+    // approval is not recorded.
+    const outcome = await prisma.$transaction(async (tx) => {
+      if (status === "APPROVED" && existing.warehouseId) {
+        const batch = await tx.inventoryBatch.findFirst({
+          where: {
+            itemId: existing.itemId,
+            warehouseId: existing.warehouseId,
+            status: "ACTIVE",
+            quantityRemaining: { gte: approvedQuantity || existing.quantity },
+          },
+        });
+
+        if (batch) {
+          const issueQty = approvedQuantity || existing.quantity;
+          const adjustment = await applyStockDelta(tx, batch.id, -issueQty);
+          if (!adjustment.ok) return { error: adjustment } as const;
+
+          const unitCost = Number(batch.purchasePrice);
+          await tx.stockTransaction.create({
+            data: {
+              type: "ISSUED",
+              batchId: batch.id,
+              fromWarehouseId: existing.warehouseId,
+              quantity: issueQty,
+              unitCost,
+              totalValue: unitCost * issueQty,
+              reason: `Fulfilled from request ${existing.requestNumber}`,
+              referenceNumber: existing.requestNumber,
+              performedById: user.id,
+              farmId: existing.farmId,
+            },
+          });
+        }
+      }
+
+      const resourceRequest = await tx.resourceRequest.update({
+        where: { id },
+        data: updateData,
+        include: {
+          item: true,
+          farm: true,
+          requestedBy: { select: { name: true, role: true } },
+          reviewedBy: { select: { name: true } },
         },
       });
+      return { resourceRequest } as const;
+    });
 
-      if (batch) {
-        const issueQty = approvedQuantity || existing.quantity;
-        const unitCost = Number(batch.purchasePrice);
-
-        await prisma.stockTransaction.create({
-          data: {
-            type: "ISSUED",
-            batchId: batch.id,
-            fromWarehouseId: existing.warehouseId,
-            quantity: issueQty,
-            unitCost,
-            totalValue: unitCost * issueQty,
-            reason: `Fulfilled from request ${existing.requestNumber}`,
-            referenceNumber: existing.requestNumber,
-            performedById: user.id,
-            farmId: existing.farmId,
-          },
-        });
-
-        const newQty = batch.quantityRemaining - issueQty;
-        await prisma.inventoryBatch.update({
-          where: { id: batch.id },
-          data: {
-            quantityRemaining: newQty,
-            status: newQty <= 0 ? "DEPLETED" : batch.status,
-          },
-        });
-      }
+    if (outcome.error) {
+      return NextResponse.json(
+        {
+          error: "Insufficient stock to fulfil this request",
+          available: outcome.error.available ?? 0,
+        },
+        { status: 409 }
+      );
     }
 
-    const resourceRequest = await prisma.resourceRequest.update({
-      where: { id },
-      data: updateData,
-      include: {
-        item: true,
-        farm: true,
-        requestedBy: { select: { name: true, role: true } },
-        reviewedBy: { select: { name: true } },
-      },
-    });
+    const resourceRequest = outcome.resourceRequest;
 
     await writeAuditLog({
       userId: user.id,
@@ -111,8 +125,9 @@ export async function PATCH(
     });
 
     return NextResponse.json(resourceRequest);
+    });
   } catch (error) {
-    console.error("Error updating request:", error);
+    logRouteError(request, "Error updating request", error);
     return NextResponse.json({ error: "Failed to update request" }, { status: 500 });
   }
 }

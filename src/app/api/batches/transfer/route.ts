@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mutationGuard, writeAuditLog, getClientIp, resolveFarmScope } from "@/lib/api-auth";
+import { mutationGuard, writeAuditLog, getClientIp, resolveFarmScope, withIdempotency } from "@/lib/api-auth";
+import { applyStockDelta } from "@/lib/stock";
+import { logRouteError } from "@/lib/logger";
 
 /**
  * POST /api/batches/transfer
@@ -31,6 +33,7 @@ export async function POST(request: Request) {
       );
     }
 
+    return await withIdempotency(request, `POST /api/batches/transfer:${user.id}`, async () => {
     const sourceBatch = await prisma.inventoryBatch.findUnique({
       where: { id: batchId },
       include: { item: true, warehouse: true },
@@ -87,26 +90,31 @@ export async function POST(request: Request) {
     });
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Reduce source batch
-      const newSourceQty = sourceBatch.quantityRemaining - quantity;
-      const updatedSource = await tx.inventoryBatch.update({
+      // 1. Reduce source batch — conditional UPDATE re-checks available
+      //    quantity under the row lock, so a concurrent transfer of the same
+      //    stock loses deterministically (409) instead of going negative.
+      const adjustment = await applyStockDelta(tx, batchId, -quantity);
+      if (!adjustment.ok) return { error: adjustment } as const;
+
+      const updatedSource = await tx.inventoryBatch.findUnique({
         where: { id: batchId },
-        data: {
-          quantityRemaining: newSourceQty,
-          status: newSourceQty <= 0 ? "DEPLETED" : sourceBatch.status,
-        },
       });
+      if (!updatedSource) return { error: { reason: "BATCH_NOT_FOUND", available: 0 } } as const;
 
       let destinationBatch;
 
       if (existingDestBatch) {
-        // Add to existing batch at destination
-        destinationBatch = await tx.inventoryBatch.update({
+        // Add to existing batch at destination — atomic increments; two
+        // concurrent transfers into the same batch must both land.
+        await tx.inventoryBatch.updateMany({
           where: { id: existingDestBatch.id },
           data: {
-            quantity: existingDestBatch.quantity + quantity,
-            quantityRemaining: existingDestBatch.quantityRemaining + quantity,
+            quantity: { increment: quantity },
+            quantityRemaining: { increment: quantity },
           },
+        });
+        destinationBatch = await tx.inventoryBatch.findUnique({
+          where: { id: existingDestBatch.id },
           include: { item: true, warehouse: true },
         });
       } else {
@@ -152,6 +160,16 @@ export async function POST(request: Request) {
       return { updatedSource, destinationBatch };
     });
 
+    if (result.error) {
+      if (result.error.reason === "BATCH_NOT_FOUND") {
+        return NextResponse.json({ error: "Source batch not found" }, { status: 404 });
+      }
+      return NextResponse.json(
+        { error: "Insufficient stock", available: result.error.available ?? 0 },
+        { status: 409 }
+      );
+    }
+
     // Audit log
     await writeAuditLog({
       userId: user.id,
@@ -176,8 +194,9 @@ export async function POST(request: Request) {
       },
       { status: 201 }
     );
+    });
   } catch (error) {
-    console.error("Error transferring stock:", error);
+    logRouteError(request, "Error transferring stock", error);
     return NextResponse.json(
       { error: "Failed to transfer stock" },
       { status: 500 }
